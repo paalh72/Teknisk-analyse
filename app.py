@@ -14,19 +14,19 @@ def calculate_ma(close_series, window=20):
         if close_series.isna().all():
             raise ValueError("Close series contains only NaN values")
         
-        st.write(f"MA input: type={type(close_series)}, dtype={close_series.dtype}, len={len(close_series)}")
+        st.write(f"MA input: type={type(close_series)}, dtype={close_series.dtype}, shape={close_series.shape}")
         
+        # Calculate MA
         ma = close_series.rolling(window=window, min_periods=1).mean()
-        return pd.DataFrame({
-            'Close': close_series,
-            'MA': ma
-        }, index=close_series.index)
+        close_np = np.ravel(close_series.to_numpy())
+        ma_np = np.ravel(ma.to_numpy())
+        
+        st.write(f"MA output: close_np shape={close_np.shape}, ma_np shape={ma_np.shape}")
+        
+        return close_np, ma_np, close_series.index
     except Exception as e:
         st.error(f"Error in MA calculation: {str(e)}")
-        return pd.DataFrame({
-            'Close': close_series,
-            'MA': np.zeros(len(close_series))
-        }, index=close_series.index)
+        return np.zeros(len(close_series)), np.zeros(len(close_series)), close_series.index
 
 # App UI
 st.title("📈 Teknisk analyse – Oslo Børs (Moving Average)")
@@ -44,10 +44,10 @@ if ticker:
                 raise ValueError("Close column missing in yfinance data")
             data = data.dropna(how='all')
             data.index = pd.to_datetime(data.index, utc=True).tz_convert(None)
-            close = pd.Series(data['Close'], dtype='float64')
+            close = pd.Series(data['Close'].values, index=data.index, dtype='float64')
             if close.isna().all():
                 raise ValueError("Close data contains only NaN values")
-            st.write(f"Fetch data: type={type(data)}, columns={data.columns}, Close dtype={close.dtype}, shape={close.shape}")
+            st.write(f"Fetch data: type={type(close)}, dtype={close.dtype}, shape={close.shape}")
             return close
 
         close_series = fetch_data(ticker, period)
@@ -55,18 +55,16 @@ if ticker:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
             # Calculate Moving Average
-            data = calculate_ma(close_series, window=ma_window)
+            close_np, ma_np, dates = calculate_ma(close_series, window=ma_window)
 
-            # Convert to NumPy for plotting, ensure 1D arrays
-            dates = np.array(data.index, dtype='datetime64[ms]')
-            close = np.ravel(data['Close'].to_numpy())
-            ma = np.ravel(data['MA'].to_numpy())
-            st.write(f"Plot data: dates shape={dates.shape}, close shape={close.shape}, ma shape={ma.shape}")
+            # Convert dates to NumPy for plotting
+            dates_np = np.array(dates, dtype='datetime64[ms]')
+            st.write(f"Plot data: dates shape={dates_np.shape}, close shape={close_np.shape}, ma shape={ma_np.shape}")
 
             # Plot Close price with MA
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=dates, y=close, name="Close", line=dict(color="#1f77b4")))
-            fig.add_trace(go.Scatter(x=dates, y=ma, name=f"MA-{ma_window}", line=dict(color="#ff7f0e")))
+            fig.add_trace(go.Scatter(x=dates_np, y=close_np, name="Close", line=dict(color="#1f77b4")))
+            fig.add_trace(go.Scatter(x=dates_np, y=ma_np, name=f"MA-{ma_window}", line=dict(color="#ff7f0e")))
             fig.update_layout(
                 title=f"{ticker} - Pris og {ma_window}-dagers Moving Average",
                 xaxis_title="Dato",
@@ -77,8 +75,8 @@ if ticker:
 
             # Summary statistic
             st.subheader("Siste verdier")
-            st.metric("Pris", f"{close[-1]:.2f}" if not np.isnan(close[-1]) else "N/A")
-            st.metric(f"MA-{ma_window}", f"{ma[-1]:.2f}" if not np.isnan(ma[-1]) else "N/A")
+            st.metric("Pris", f"{close_np[-1]:.2f}" if not np.isnan(close_np[-1]) else "N/A")
+            st.metric(f"MA-{ma_window}", f"{ma_np[-1]:.2f}" if not np.isnan(ma_np[-1]) else "N/A")
 
     except Exception as e:
         st.error(f"En feil oppstod: {str(e)}")

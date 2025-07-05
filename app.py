@@ -16,14 +16,18 @@ def rsi(data, period=14):
             raise ValueError("Delta from diff() is not a pandas Series")
         gain = delta.where(delta > 0, 0).rolling(window=period, min_periods=1).mean()
         loss = -delta.where(delta < 0, 0).rolling(window=period, min_periods=1).mean()
-        rs = gain / loss
+        # Avoid division by zero
+        rs = gain / loss.where(loss != 0, np.finfo(float).eps)
         result = 100 - (100 / (1 + rs))
+        # Ensure numeric and handle inf/NaN
+        result = pd.to_numeric(result, errors='coerce').astype('float64')
+        result = result.replace([np.inf, -np.inf], np.nan)
         if not isinstance(result, pd.Series):
             raise ValueError("RSI result is not a pandas Series")
         return result
     except Exception as e:
         st.error(f"Error in RSI calculation: {str(e)}")
-        return pd.Series(np.nan, index=data.index)
+        return pd.Series(np.nan, index=data.index, dtype='float64')
 
 # MA
 def ma(data, period=20):
@@ -33,12 +37,14 @@ def ma(data, period=20):
         if not pd.api.types.is_numeric_dtype(data['Close']):
             raise ValueError("Column 'Close' must be numeric for MA calculation")
         result = data['Close'].rolling(window=period, min_periods=1).mean()
+        result = pd.to_numeric(result, errors='coerce').astype('float64')
+        result = result.replace([np.inf, -np.inf], np.nan)
         if not isinstance(result, pd.Series):
             raise ValueError("MA result is not a pandas Series")
         return result
     except Exception as e:
         st.error(f"Error in MA calculation: {str(e)}")
-        return pd.Series(np.nan, index=data.index)
+        return pd.Series(np.nan, index=data.index, dtype='float64')
 
 # MFI
 def mfi(data, period=14):
@@ -53,13 +59,16 @@ def mfi(data, period=14):
         mf = tp * data['Volume']
         pos = mf.where(tp > tp.shift(), 0).rolling(window=period, min_periods=1).sum()
         neg = mf.where(tp < tp.shift(), 0).rolling(window=period, min_periods=1).sum()
-        result = 100 - (100 / (1 + pos / neg))
+        # Avoid division by zero
+        result = 100 - (100 / (1 + pos / neg.where(neg != 0, np.finfo(float).eps)))
+        result = pd.to_numeric(result, errors='coerce').astype('float64')
+        result = result.replace([np.inf, -np.inf], np.nan)
         if not isinstance(result, pd.Series):
             raise ValueError("MFI result is not a pandas Series")
         return result
     except Exception as e:
         st.error(f"Error in MFI calculation: {str(e)}")
-        return pd.Series(np.nan, index=data.index)
+        return pd.Series(np.nan, index=data.index, dtype='float64')
 
 # MACD
 def macd(data, short=12, long=26, signal=9):
@@ -72,12 +81,16 @@ def macd(data, short=12, long=26, signal=9):
         long_ema = data['Close'].ewm(span=long, adjust=False).mean()
         macd_line = short_ema - long_ema
         sig_line = macd_line.ewm(span=signal, adjust=False).mean()
+        macd_line = pd.to_numeric(macd_line, errors='coerce').astype('float64')
+        sig_line = pd.to_numeric(sig_line, errors='coerce').astype('float64')
+        macd_line = macd_line.replace([np.inf, -np.inf], np.nan)
+        sig_line = sig_line.replace([np.inf, -np.inf], np.nan)
         if not (isinstance(macd_line, pd.Series) and isinstance(sig_line, pd.Series)):
             raise ValueError("MACD or Signal line is not a pandas Series")
         return macd_line, sig_line
     except Exception as e:
         st.error(f"Error in MACD calculation: {str(e)}")
-        return pd.Series(np.nan, index=data.index), pd.Series(np.nan, index=data.index)
+        return pd.Series(np.nan, index=data.index, dtype='float64'), pd.Series(np.nan, index=data.index, dtype='float64')
 
 # DeMark 9-13
 def demark(data):
@@ -155,7 +168,7 @@ if ticker:
     try:
         # Cache data fetching to avoid repeated API calls
         @st.cache_data
-        def fetch_data(ticker, period):
+        def fetch_data(ticker, period, _version=1):
             return yf.download(ticker, period=period, interval="1d", auto_adjust=False)
 
         data = fetch_data(ticker, period)
@@ -186,6 +199,10 @@ if ticker:
             data["MACD"], data["SIGNAL"] = macd(data)
             data["VolMA"] = data["Volume"].rolling(window=20, min_periods=1).mean()
 
+            # Debug: Inspect calculated columns
+            st.write("Calculated columns:", data[['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']].dtypes)
+            st.write("First few rows of calculated columns:", data[['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']].head())
+
             # Pris + DeMark
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=data.index, y=data["Close"], name="Close"))
@@ -199,18 +216,31 @@ if ticker:
 
             # RSI
             st.subheader("RSI")
-            st.line_chart(data["RSI"])
+            rsi_data = data["RSI"].astype('float64').replace([np.inf, -np.inf], np.nan)
+            if rsi_data.isna().all():
+                st.warning("RSI data contains only NaN values")
+            else:
+                st.line_chart(rsi_data)
 
             # MACD
             st.subheader("MACD")
             macd_fig = go.Figure()
-            macd_fig.add_trace(go.Scatter(x=data.index, y=data["MACD"], name="MACD"))
-            macd_fig.add_trace(go.Scatter(x=data.index, y=data["SIGNAL"], name="Signal", line=dict(dash="dot")))
-            st.plotly_chart(macd_fig, use_container_width=True)
+            macd_data = data["MACD"].astype('float64').replace([np.inf, -np.inf], np.nan)
+            signal_data = data["SIGNAL"].astype('float64').replace([np.inf, -np.inf], np.nan)
+            if macd_data.isna().all() or signal_data.isna().all():
+                st.warning("MACD or Signal data contains only NaN values")
+            else:
+                macd_fig.add_trace(go.Scatter(x=data.index, y=macd_data, name="MACD"))
+                macd_fig.add_trace(go.Scatter(x=data.index, y=signal_data, name="Signal", line=dict(dash="dot")))
+                st.plotly_chart(macd_fig, use_container_width=True)
 
             # MFI
             st.subheader("MFI")
-            st.line_chart(data["MFI"])
+            mfi_data = data["MFI"].astype('float64').replace([np.inf, -np.inf], np.nan)
+            if mfi_data.isna().all():
+                st.warning("MFI data contains only NaN values")
+            else:
+                st.line_chart(mfi_data)
 
             # Volume
             st.subheader("Volum og snitt")

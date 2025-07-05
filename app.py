@@ -24,7 +24,6 @@ def rsi(data, period=14):
         result = result.replace([np.inf, -np.inf], np.nan)
         if not isinstance(result, pd.Series):
             raise ValueError("RSI result is not a pandas Series")
-        # Debug: Check for non-numeric values
         if result.dtype != 'float64':
             raise ValueError(f"RSI contains non-float64 values: {result.dtype}")
         return result
@@ -177,7 +176,7 @@ if ticker:
     try:
         # Cache data fetching to avoid repeated API calls
         @st.cache_data
-        def fetch_data(ticker, period, _version=2):
+        def fetch_data(ticker, period, _version=3):
             return yf.download(ticker, period=period, interval="1d", auto_adjust=False)
 
         data = fetch_data(ticker, period)
@@ -235,17 +234,19 @@ if ticker:
 
             # RSI
             st.subheader("RSI")
-            rsi_data = data["RSI"].astype('float64').replace([np.inf, -np.inf], np.nan)
+            rsi_data = data["RSI"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
             if rsi_data.isna().all():
                 st.warning("RSI data contains only NaN values")
             else:
-                st.line_chart(rsi_data)
+                rsi_fig = go.Figure()
+                rsi_fig.add_trace(go.Scatter(x=data.index, y=rsi_data, name="RSI"))
+                st.plotly_chart(rsi_fig, use_container_width=True)
 
             # MACD
             st.subheader("MACD")
             macd_fig = go.Figure()
-            macd_data = data["MACD"].astype('float64').replace([np.inf, -np.inf], np.nan)
-            signal_data = data["SIGNAL"].astype('float64').replace([np.inf, -np.inf], np.nan)
+            macd_data = data["MACD"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
+            signal_data = data["SIGNAL"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
             if macd_data.isna().all() or signal_data.isna().all():
                 st.warning("MACD or Signal data contains only NaN values")
             else:
@@ -255,11 +256,13 @@ if ticker:
 
             # MFI
             st.subheader("MFI")
-            mfi_data = data["MFI"].astype('float64').replace([np.inf, -np.inf], np.nan)
+            mfi_data = data["MFI"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
             if mfi_data.isna().all():
                 st.warning("MFI data contains only NaN values")
             else:
-                st.line_chart(mfi_data)
+                mfi_fig = go.Figure()
+                mfi_fig.add_trace(go.Scatter(x=data.index, y=mfi_data, name="MFI"))
+                st.plotly_chart(mfi_fig, use_container_width=True)
 
             # Volume
             st.subheader("Volum og snitt")

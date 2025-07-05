@@ -176,7 +176,7 @@ if ticker:
     try:
         # Cache data fetching to avoid repeated API calls
         @st.cache_data
-        def fetch_data(ticker, period, _version=3):
+        def fetch_data(ticker, period, _version=4):
             return yf.download(ticker, period=period, interval="1d", auto_adjust=False)
 
         data = fetch_data(ticker, period)
@@ -184,9 +184,9 @@ if ticker:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
             # Debug: Inspect raw data
-            st.write("Data columns:", data.columns)
-            st.write("Data types:", data.dtypes)
-            st.write("First few rows:", data.head())
+            st.text(f"Data columns: {list(data.columns)}")
+            st.text(f"Data types:\n{data.dtypes.to_string()}")
+            st.text(f"First few rows:\n{data.head().to_string()}")
 
             # Ensure numeric columns
             numeric_columns = ['Close', 'High', 'Low', 'Volume']
@@ -208,10 +208,11 @@ if ticker:
             data["VolMA"] = data["Volume"].rolling(window=20, min_periods=1).mean()
 
             # Debug: Inspect calculated columns
-            st.write("Calculated columns:", data[['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']].dtypes)
-            st.write("First few rows of calculated columns:", data[['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']].head())
+            calc_cols = ['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']
+            st.text(f"Calculated columns dtypes:\n{data[calc_cols].dtypes.to_string()}")
+            st.text(f"First few rows of calculated columns:\n{data[calc_cols].head().to_string()}")
             # Check for non-numeric values
-            for col in ['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']:
+            for col in calc_cols:
                 if data[col].dtype != 'float64':
                     st.warning(f"Column {col} has non-float64 dtype: {data[col].dtype}")
                 if data[col].isna().all():

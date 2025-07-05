@@ -98,4 +98,3 @@ if ticker:
         vfig.add_trace(go.Bar(x=data.index, y=data["Volume"], name="Volume"))
         vfig.add_trace(go.Scatter(x=data.index, y=data["VolMA"], name="VolMA"))
         st.plotly_chart(vfig, use_container_width=True)
-Add app.py

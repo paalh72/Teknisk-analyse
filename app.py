@@ -34,8 +34,13 @@ def macd(data, short=12, long=26, signal=9):
 # DeMark 9-13
 def demark(data):
     # Ensure required columns exist
-    if not all(col in data.columns for col in ['Close', 'High', 'Low', 'Volume']):
-        raise ValueError("DataFrame missing required columns: 'Close', 'High', 'Low', or 'Volume'")
+    required_columns = ['Close', 'High', 'Low', 'Volume']
+    if not all(col in data.columns for col in required_columns):
+        raise ValueError(f"DataFrame missing required columns: {', '.join(set(required_columns) - set(data.columns))}")
+    
+    # Ensure Close is numeric
+    if not pd.api.types.is_numeric_dtype(data['Close']):
+        raise ValueError("Column 'Close' must be numeric")
     
     # Initialize columns
     data = data.copy()  # Avoid modifying the original DataFrame
@@ -48,14 +53,21 @@ def demark(data):
     for i in range(len(data)):
         if i < 4:  # Skip rows where C4 is NaN
             continue
-        # Check for NaN values to avoid comparison issues
-        if pd.isna(data["Close"].iloc[i]) or pd.isna(data["C4"].iloc[i]):
+        try:
+            close_val = data["Close"].iloc[i]
+            c4_val = data["C4"].iloc[i]
+            if pd.isna(close_val) or pd.isna(c4_val):
+                count = 0
+            elif not (isinstance(close_val, (int, float)) and isinstance(c4_val, (int, float))):
+                count = 0
+            elif close_val > c4_val:
+                count += 1
+            else:
+                count = 0
+            data.at[data.index[i], "Setup"] = count
+        except Exception as e:
+            st.warning(f"Error processing Setup at index {i}: {str(e)}")
             count = 0
-        elif data["Close"].iloc[i] > data["C4"].iloc[i]:
-            count += 1
-        else:
-            count = 0
-        data.at[data.index[i], "Setup"] = count
     
     cd = 0
     started = False
@@ -64,13 +76,21 @@ def demark(data):
             started = True
             cd = 0
         if started and i >= 2:
-            if pd.isna(data["Close"].iloc[i]) or pd.isna(data["C2"].iloc[i]):
+            try:
+                close_val = data["Close"].iloc[i]
+                c2_val = data["C2"].iloc[i]
+                if pd.isna(close_val) or pd.isna(c2_val):
+                    cd = 0
+                elif not (isinstance(close_val, (int, float)) and isinstance(c2_val, (int, float))):
+                    cd = 0
+                elif close_val > c2_val:
+                    cd += 1
+                data.at[data.index[i], "Countdown"] = cd
+                if cd == 13:
+                    started = False
+            except Exception as e:
+                st.warning(f"Error processing Countdown at index {i}: {str(e)}")
                 cd = 0
-            elif data["Close"].iloc[i] > data["C2"].iloc[i]:
-                cd += 1
-            data.at[data.index[i], "Countdown"] = cd
-            if cd == 13:
-                started = False
     return data
 
 # App UI
@@ -82,8 +102,12 @@ if ticker:
     try:
         data = yf.download(ticker, period=period, interval="1d", auto_adjust=False)
         if data.empty:
-            st.warning("Fant ikke data for ticker: " + ticker)
+            st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
+            # Debug: Inspect data
+            # st.write("Data columns:", data.columns)
+            # st.write("First few rows:", data.head())
+            
             # Calculate technical indicators
             data = demark(data)
             data["RSI"] = rsi(data)

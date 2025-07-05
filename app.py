@@ -16,9 +16,12 @@ def demark(close_series):
         
         st.write(f"DeMark input: type={type(close_series)}, dtype={close_series.dtype}, len={len(close_series)}")
         
-        setup = np.zeros(len(close_series), dtype='int64')
-        countdown = np.zeros(len(close_series), dtype='int64')
-        close = close_series.to_numpy()
+        # Convert to 1D NumPy array
+        close = np.ravel(close_series.to_numpy())
+        st.write(f"DeMark close array: shape={close.shape}, type={type(close)}")
+        
+        setup = np.zeros(len(close), dtype='int64')
+        countdown = np.zeros(len(close), dtype='int64')
         c4 = np.roll(close, 4)
         c2 = np.roll(close, 2)
         
@@ -46,14 +49,14 @@ def demark(close_series):
                     started = False
         
         return pd.DataFrame({
-            'Close': close_series,
+            'Close': close,
             'Setup': setup,
             'Countdown': countdown
         }, index=close_series.index)
     except Exception as e:
         st.error(f"Error in DeMark calculation: {str(e)}")
         return pd.DataFrame({
-            'Close': close_series,
+            'Close': np.zeros(len(close_series)),
             'Setup': np.zeros(len(close_series), dtype='int64'),
             'Countdown': np.zeros(len(close_series), dtype='int64')
         }, index=close_series.index)
@@ -76,7 +79,7 @@ if ticker:
             close = pd.Series(data['Close'], dtype='float64')
             if close.isna().all():
                 raise ValueError("Close data contains only NaN values")
-            st.write(f"Fetch data: type={type(data)}, columns={data.columns}, Close dtype={close.dtype}")
+            st.write(f"Fetch data: type={type(data)}, columns={data.columns}, Close dtype={close.dtype}, shape={close.shape}")
             return close
 
         close_series = fetch_data(ticker, period)
@@ -86,12 +89,12 @@ if ticker:
             # Calculate DeMark
             data = demark(close_series)
 
-            # Convert to NumPy for plotting
+            # Convert to NumPy for plotting, ensure 1D arrays
             dates = np.array(data.index, dtype='datetime64[ms]')
-            close = data['Close'].to_numpy()
-            setup = data['Setup'].to_numpy()
-            countdown = data['Countdown'].to_numpy()
-            st.write(f"Plot data: dates type={type(dates)}, close type={type(close)}, setup type={type(setup)}")
+            close = np.ravel(data['Close'].to_numpy())
+            setup = np.ravel(data['Setup'].to_numpy())
+            countdown = np.ravel(data['Countdown'].to_numpy())
+            st.write(f"Plot data: dates shape={dates.shape}, close shape={close.shape}, setup shape={setup.shape}")
 
             # Plot Close price with DeMark signals
             fig = go.Figure()

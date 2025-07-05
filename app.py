@@ -24,6 +24,9 @@ def rsi(data, period=14):
         result = result.replace([np.inf, -np.inf], np.nan)
         if not isinstance(result, pd.Series):
             raise ValueError("RSI result is not a pandas Series")
+        # Debug: Check for non-numeric values
+        if result.dtype != 'float64':
+            raise ValueError(f"RSI contains non-float64 values: {result.dtype}")
         return result
     except Exception as e:
         st.error(f"Error in RSI calculation: {str(e)}")
@@ -41,6 +44,8 @@ def ma(data, period=20):
         result = result.replace([np.inf, -np.inf], np.nan)
         if not isinstance(result, pd.Series):
             raise ValueError("MA result is not a pandas Series")
+        if result.dtype != 'float64':
+            raise ValueError(f"MA contains non-float64 values: {result.dtype}")
         return result
     except Exception as e:
         st.error(f"Error in MA calculation: {str(e)}")
@@ -65,6 +70,8 @@ def mfi(data, period=14):
         result = result.replace([np.inf, -np.inf], np.nan)
         if not isinstance(result, pd.Series):
             raise ValueError("MFI result is not a pandas Series")
+        if result.dtype != 'float64':
+            raise ValueError(f"MFI contains non-float64 values: {result.dtype}")
         return result
     except Exception as e:
         st.error(f"Error in MFI calculation: {str(e)}")
@@ -87,6 +94,8 @@ def macd(data, short=12, long=26, signal=9):
         sig_line = sig_line.replace([np.inf, -np.inf], np.nan)
         if not (isinstance(macd_line, pd.Series) and isinstance(sig_line, pd.Series)):
             raise ValueError("MACD or Signal line is not a pandas Series")
+        if macd_line.dtype != 'float64' or sig_line.dtype != 'float64':
+            raise ValueError(f"MACD or Signal contains non-float64 values: MACD {macd_line.dtype}, Signal {sig_line.dtype}")
         return macd_line, sig_line
     except Exception as e:
         st.error(f"Error in MACD calculation: {str(e)}")
@@ -168,7 +177,7 @@ if ticker:
     try:
         # Cache data fetching to avoid repeated API calls
         @st.cache_data
-        def fetch_data(ticker, period, _version=1):
+        def fetch_data(ticker, period, _version=2):
             return yf.download(ticker, period=period, interval="1d", auto_adjust=False)
 
         data = fetch_data(ticker, period)
@@ -202,6 +211,16 @@ if ticker:
             # Debug: Inspect calculated columns
             st.write("Calculated columns:", data[['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']].dtypes)
             st.write("First few rows of calculated columns:", data[['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']].head())
+            # Check for non-numeric values
+            for col in ['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']:
+                if data[col].dtype != 'float64':
+                    st.warning(f"Column {col} has non-float64 dtype: {data[col].dtype}")
+                if data[col].isna().all():
+                    st.warning(f"Column {col} contains only NaN values")
+                else:
+                    non_numeric = data[col][~data[col].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))]
+                    if not non_numeric.empty:
+                        st.warning(f"Column {col} contains non-numeric values: {non_numeric.head().to_list()}")
 
             # Pris + DeMark
             fig = go.Figure()

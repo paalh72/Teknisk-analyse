@@ -149,107 +149,109 @@ def demark(data):
 
 def bulletproof_arrow_clean(df):
     """
-    Ultra-aggressive DataFrame cleaning for Arrow compatibility
+    Enhanced DataFrame cleaning for Arrow compatibility
     """
-    # Create completely new DataFrame from scratch
-    cleaned_df = pd.DataFrame()
-    
-    # Handle index - always reset to RangeIndex
-    if not isinstance(df.index, pd.RangeIndex):
-        if hasattr(df.index, 'to_pydatetime'):
-            # If datetime index, add as column first
-            cleaned_df['Date'] = pd.to_datetime(df.index.to_pydatetime(), errors='coerce')
-        df = df.reset_index(drop=True)
-    
-    # Process each column with extreme prejudice
-    for col in df.columns:
-        try:
-            series = df[col]
-            
-            # Skip if column is empty
-            if len(series) == 0:
-                continue
-            
-            # Convert to numpy array first to eliminate any pandas extension dtypes
-            values = series.values
-            
-            # Handle datetime columns
-            if pd.api.types.is_datetime64_any_dtype(series):
-                cleaned_df[col] = pd.to_datetime(values, errors='coerce')
-                continue
-            
-            # For everything else, convert to basic numpy types
+    try:
+        # Create a completely new DataFrame
+        cleaned_df = pd.DataFrame()
+        
+        # Always reset index to avoid datetime index issues
+        if isinstance(df.index, pd.DatetimeIndex):
+            cleaned_df['Date'] = df.index.strftime('%Y-%m-%d')
+        
+        # Reset the original DataFrame index
+        df_reset = df.reset_index(drop=True)
+        
+        # Process each column individually
+        for col in df_reset.columns:
             try:
-                # Try to convert to float64 (most compatible with Arrow)
-                if series.dtype == 'object' or 'Float' in str(series.dtype) or 'Int' in str(series.dtype) or 'float' in str(series.dtype).lower():
-                    # Convert via numpy array to eliminate extension dtypes
-                    float_values = np.array(values, dtype=object)
-                    numeric_values = pd.to_numeric(float_values, errors='coerce')
-                    
-                    # If we get valid numbers, use them
-                    if numeric_values.notna().sum() > 0:
-                        # Force to standard numpy float64
-                        cleaned_df[col] = np.array(numeric_values, dtype=np.float64)
-                    else:
-                        # Convert to string
-                        cleaned_df[col] = np.array([str(x) for x in values], dtype=object)
-                        
-                elif pd.api.types.is_integer_dtype(series):
-                    # Force to standard numpy int64
-                    int_values = np.array(values, dtype=np.int64)
-                    cleaned_df[col] = int_values
+                series = df_reset[col]
+                
+                # Skip empty columns
+                if len(series) == 0:
+                    continue
+                
+                # Handle different data types
+                if pd.api.types.is_datetime64_any_dtype(series):
+                    # Convert datetime to string
+                    cleaned_df[col] = series.dt.strftime('%Y-%m-%d %H:%M:%S')
                     
                 elif pd.api.types.is_numeric_dtype(series):
-                    # Force to standard numpy float64
-                    float_values = np.array(values, dtype=np.float64)
-                    cleaned_df[col] = float_values
+                    # Clean numeric data
+                    numeric_series = pd.to_numeric(series, errors='coerce')
                     
+                    # Replace infinities and extreme values
+                    numeric_series = numeric_series.replace([np.inf, -np.inf], np.nan)
+                    
+                    # Fill NaN values with 0
+                    numeric_series = numeric_series.fillna(0)
+                    
+                    # Round to avoid precision issues
+                    if numeric_series.dtype == 'float64':
+                        numeric_series = numeric_series.round(8)
+                    
+                    # Convert to standard numpy dtype
+                    if 'int' in str(numeric_series.dtype).lower():
+                        cleaned_df[col] = numeric_series.astype('int64')
+                    else:
+                        cleaned_df[col] = numeric_series.astype('float64')
+                
                 else:
-                    # Everything else becomes string
-                    cleaned_df[col] = np.array([str(x) for x in values], dtype=object)
+                    # Convert everything else to string
+                    cleaned_df[col] = series.astype(str).fillna('')
                     
-            except Exception as inner_e:
-                # Ultimate fallback - convert to string
-                cleaned_df[col] = np.array([str(x) for x in values], dtype=object)
-                
-        except Exception as e:
-            # Skip problematic columns entirely
-            st.warning(f"Skipping column {col} due to error: {str(e)}")
-            continue
-    
-    # Post-process to ensure Arrow compatibility
-    for col in cleaned_df.columns:
-        try:
-            # Handle infinite values in numeric columns
-            if pd.api.types.is_numeric_dtype(cleaned_df[col]):
-                cleaned_df[col] = cleaned_df[col].replace([np.inf, -np.inf], np.nan)
-                cleaned_df[col] = cleaned_df[col].fillna(0)
-                
-                # Round to avoid precision issues
-                if cleaned_df[col].dtype == np.float64:
-                    cleaned_df[col] = np.round(cleaned_df[col], 8)
-            else:
-                # Fill NaN in non-numeric columns
-                cleaned_df[col] = cleaned_df[col].fillna('')
-                
-        except Exception as e:
-            # Convert problematic columns to string
-            cleaned_df[col] = cleaned_df[col].astype(str)
-    
-    # Final validation - ensure only Arrow-compatible dtypes
-    for col in cleaned_df.columns:
-        dtype_str = str(cleaned_df[col].dtype)
+            except Exception as col_error:
+                st.warning(f"Skipping column {col}: {str(col_error)}")
+                continue
         
-        # Only allow these specific dtypes
-        if dtype_str not in ['float64', 'int64', 'object', 'datetime64[ns]', 'bool']:
-            try:
-                # Try to convert to float64
-                cleaned_df[col] = pd.to_numeric(cleaned_df[col], errors='coerce').astype(np.float64)
-            except:
-                # Fallback to string
-                cleaned_df[col] = cleaned_df[col].astype(str)
+        # Final validation - ensure DataFrame is not empty
+        if len(cleaned_df.columns) == 0:
+            raise ValueError("No columns remaining after cleaning")
+        
+        return cleaned_df
+        
+    except Exception as e:
+        st.error(f"DataFrame cleaning failed: {str(e)}")
+        return pd.DataFrame()
+
+def safe_display_dataframe(df, title="Data"):
+    """
+    Multiple fallback strategies for displaying DataFrames
+    """
+    st.write(f"**{title}** ({df.shape[0]} rows, {df.shape[1]} columns)")
     
-    return cleaned_df
+    try:
+        # Strategy 1: Clean and display with st.dataframe
+        display_data = bulletproof_arrow_clean(df)
+        if not display_data.empty:
+            st.dataframe(display_data, use_container_width=True)
+            return True
+    except Exception as e1:
+        st.warning(f"st.dataframe failed: {str(e1)}")
+    
+    try:
+        # Strategy 2: Display limited rows with st.table
+        limited_data = bulletproof_arrow_clean(df.tail(10))
+        if not limited_data.empty:
+            st.write("**Last 10 rows:**")
+            st.table(limited_data)
+            return True
+    except Exception as e2:
+        st.warning(f"st.table failed: {str(e2)}")
+    
+    try:
+        # Strategy 3: Basic statistics only
+        st.write("**Column Information:**")
+        for col in df.columns:
+            if pd.api.types.is_numeric_dtype(df[col]):
+                last_val = df[col].iloc[-1] if not df[col].empty else 0
+                st.write(f"- {col}: {last_val:.4f} (last value)")
+            else:
+                st.write(f"- {col}: {df[col].dtype}")
+        return True
+    except Exception as e3:
+        st.error(f"All display methods failed: {str(e3)}")
+        return False
 
 # App UI
 st.title("📈 Teknisk analyse – Oslo Børs")
@@ -259,7 +261,7 @@ period = st.selectbox("Periode", ["3mo", "6mo", "1y", "2y"], index=1)
 if ticker:
     try:
         # Cache data fetching to avoid repeated API calls
-        @st.cache_data
+        @st.cache_data(ttl=300)  # Cache for 5 minutes
         def fetch_data(ticker, period):
             try:
                 data = yf.download(ticker, period=period, interval="1d", auto_adjust=False)
@@ -269,7 +271,7 @@ if ticker:
                     return pd.DataFrame()
                 
                 # Clean data immediately after download
-                data = data.dropna(how='all')  # Remove completely empty rows
+                data = data.dropna(how='all')
                 
                 # Ensure proper column types
                 for col in data.columns:
@@ -388,80 +390,9 @@ if ticker:
             with col4:
                 st.metric("MACD", f"{data['MACD'].iloc[-1]:.4f}")
             
-            # Show dataframe with multiple fallback strategies
+            # Show dataframe with improved error handling
             if st.checkbox("Vis rådata"):
-                st.write(f"**Dataframe info:** {data.shape[0]} rader, {data.shape[1]} kolonner")
-                
-                # Strategy 1: Try bulletproof cleaning + st.dataframe
-                try:
-                    display_data = bulletproof_arrow_clean(data)
-                    st.write("**Komplett dataset:**")
-                    st.dataframe(display_data, use_container_width=True)
-                    
-                except Exception as e1:
-                    st.warning(f"st.dataframe failed: {str(e1)}")
-                    
-                    # Strategy 2: Try st.table with limited rows
-                    try:
-                        st.write("**Siste 20 rader (via st.table):**")
-                        display_data = bulletproof_arrow_clean(data.tail(20))
-                        st.table(display_data)
-                        
-                    except Exception as e2:
-                        st.warning(f"st.table failed: {str(e2)}")
-                        
-                        # Strategy 3: Manual HTML table
-                        try:
-                            st.write("**Siste 10 rader (HTML):**")
-                            html_data = data.tail(10).round(4)
-                            st.write(html_data.to_html(escape=False), unsafe_allow_html=True)
-                            
-                        except Exception as e3:
-                            st.warning(f"HTML table failed: {str(e3)}")
-                            
-                            # Strategy 4: Basic statistics only
-                            try:
-                                st.write("**Grunnleggende statistikk:**")
-                                numeric_cols = data.select_dtypes(include=[np.number]).columns
-                                
-                                # Show column info
-                                st.write("**Kolonner og typer:**")
-                                for col in data.columns:
-                                    st.write(f"- {col}: {data[col].dtype}")
-                                
-                                # Show basic stats
-                                st.write("**Statistikk for numeriske kolonner:**")
-                                stats_data = data[numeric_cols].describe()
-                                
-                                # Convert stats to simple format
-                                stats_dict = {}
-                                for col in stats_data.columns:
-                                    stats_dict[col] = {
-                                        'count': int(stats_data.loc['count', col]),
-                                        'mean': float(stats_data.loc['mean', col]),
-                                        'std': float(stats_data.loc['std', col]),
-                                        'min': float(stats_data.loc['min', col]),
-                                        'max': float(stats_data.loc['max', col])
-                                    }
-                                
-                                for col, stats in stats_dict.items():
-                                    st.write(f"**{col}:**")
-                                    st.write(f"  Count: {stats['count']}, Mean: {stats['mean']:.2f}, Std: {stats['std']:.2f}")
-                                    st.write(f"  Min: {stats['min']:.2f}, Max: {stats['max']:.2f}")
-                                
-                                # Show last few values
-                                st.write("**Siste verdier:**")
-                                for col in numeric_cols[:5]:  # Show first 5 numeric columns
-                                    last_val = data[col].iloc[-1]
-                                    st.write(f"- {col}: {last_val:.4f}")
-                                
-                            except Exception as e4:
-                                st.error(f"All display methods failed. Last error: {str(e4)}")
-                                st.write("**Raw data info:**")
-                                st.write(f"Shape: {data.shape}")
-                                st.write(f"Columns: {list(data.columns)}")
-                                st.write(f"Index type: {type(data.index)}")
-                                st.write(f"Data types: {dict(data.dtypes)}")
+                safe_display_dataframe(data, "Komplett dataset")
 
     except Exception as e:
         st.error(f"En feil oppstod: {str(e)}")

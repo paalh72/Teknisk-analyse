@@ -92,16 +92,13 @@ def demark(data):
             if not pd.api.types.is_numeric_dtype(data[col]):
                 raise ValueError(f"Column '{col}' must be numeric")
         
-        # Initialize columns
-        data = data.copy()  # Avoid modifying the original DataFrame
-        data["C4"] = data["Close"].shift(4)
-        data["C2"] = data["Close"].shift(2)
-        data["Setup"] = 0
-        data["Countdown"] = 0
-        
-        # Ensure Setup and Countdown are integers
-        data["Setup"] = data["Setup"].astype('int64')
-        data["Countdown"] = data["Countdown"].astype('int64')
+        # Initialize columns with proper dtypes
+        data = data.copy()
+        # CRITICAL FIX: Ensure shifted columns are float64, not object
+        data["C4"] = data["Close"].shift(4).astype('float64')
+        data["C2"] = data["Close"].shift(2).astype('float64')
+        data["Setup"] = pd.Series(0, index=data.index, dtype='int64')
+        data["Countdown"] = pd.Series(0, index=data.index, dtype='int64')
         
         count = 0
         for i in range(len(data)):
@@ -112,13 +109,11 @@ def demark(data):
                 c4_val = data["C4"].iloc[i]
                 if pd.isna(close_val) or pd.isna(c4_val):
                     count = 0
-                elif not (isinstance(close_val, (int, float)) and isinstance(c4_val, (int, float))):
-                    count = 0
                 elif close_val > c4_val:
                     count += 1
                 else:
                     count = 0
-                data.at[data.index[i], "Setup"] = count
+                data.iloc[i, data.columns.get_loc("Setup")] = count
             except Exception as e:
                 st.warning(f"Error processing Setup at index {i}: {str(e)}")
                 count = 0
@@ -135,20 +130,20 @@ def demark(data):
                     c2_val = data["C2"].iloc[i]
                     if pd.isna(close_val) or pd.isna(c2_val):
                         cd = 0
-                    elif not (isinstance(close_val, (int, float)) and isinstance(c2_val, (int, float))):
-                        cd = 0
                     elif close_val > c2_val:
                         cd += 1
-                    data.at[data.index[i], "Countdown"] = cd
+                    data.iloc[i, data.columns.get_loc("Countdown")] = cd
                     if cd == 13:
                         started = False
                 except Exception as e:
                     st.warning(f"Error processing Countdown at index {i}: {str(e)}")
                     cd = 0
         
-        # Ensure all numeric columns have proper dtypes
+        # Ensure all columns maintain proper dtypes
         data["Setup"] = data["Setup"].astype('int64')
         data["Countdown"] = data["Countdown"].astype('int64')
+        data["C4"] = data["C4"].astype('float64')
+        data["C2"] = data["C2"].astype('float64')
         
         return data
     except Exception as e:
@@ -159,24 +154,33 @@ def clean_dataframe(df):
     """Clean DataFrame to prevent Arrow serialization errors"""
     df = df.copy()
     
-    # Convert all object columns to proper numeric types
-    for col in df.columns:
-        if df[col].dtype == 'object':
-            try:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-            except:
-                pass
+    # Replace infinite values with NaN
+    df = df.replace([np.inf, -np.inf], np.nan)
     
-    # Ensure all numeric columns have consistent dtypes
-    numeric_cols = ['Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close']
-    for col in numeric_cols:
+    # Define expected column types
+    float_cols = ['Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close', 
+                  'C4', 'C2', 'RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL', 'VolMA']
+    int_cols = ['Setup', 'Countdown']
+    
+    # Convert float columns
+    for col in float_cols:
         if col in df.columns:
-            df[col] = df[col].astype('float64')
+            df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
+    
+    # Convert integer columns
+    for col in int_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('int64')
     
     # Handle any remaining object columns
     for col in df.columns:
         if df[col].dtype == 'object':
-            df[col] = df[col].astype(str)
+            # Try to convert to numeric first
+            try:
+                df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
+            except:
+                # If that fails, convert to string
+                df[col] = df[col].astype('string')
     
     return df
 
@@ -191,17 +195,20 @@ if ticker:
         @st.cache_data
         def fetch_data(ticker, period):
             data = yf.download(ticker, period=period, interval="1d", auto_adjust=False)
-            return clean_dataframe(data)
+            return data
 
-        data = fetch_data(ticker, period)
-        if data.empty:
+        raw_data = fetch_data(ticker, period)
+        if raw_data.empty:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
+            # Clean initial data
+            data = clean_dataframe(raw_data)
+            
             # Ensure numeric columns
             numeric_columns = ['Close', 'High', 'Low', 'Volume']
             for col in numeric_columns:
                 if col in data.columns:
-                    data[col] = pd.to_numeric(data[col], errors='coerce')
+                    data[col] = pd.to_numeric(data[col], errors='coerce').astype('float64')
                     if data[col].isna().all():
                         raise ValueError(f"Column '{col}' contains only non-numeric or missing values after conversion")
             
@@ -217,7 +224,7 @@ if ticker:
             data["MACD"], data["SIGNAL"] = macd(data)
             data["VolMA"] = data["Volume"].rolling(window=20, min_periods=1).mean().astype('float64')
 
-            # Clean the final dataframe
+            # Final cleanup to ensure Arrow compatibility
             data = clean_dataframe(data)
 
             # Pris + DeMark

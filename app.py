@@ -243,7 +243,7 @@ period = st.selectbox("Periode", ["3mo", "6mo", "1y", "2y"], index=1)
 if ticker:
     try:
         @st.cache_data(ttl=3600) # Cache data for 1 time (3600 sekunder)
-        def fetch_data(ticker_symbol, data_period, _version=12): # Øk _version hvis logikken i denne funksjonen endres
+        def fetch_data(ticker_symbol, data_period, _version=13): # Øk _version hvis logikken i denne funksjonen endres
             """
             Henter daglig aksjedata fra Yahoo Finance.
 
@@ -256,20 +256,39 @@ if ticker:
             pd.DataFrame: DataFrame med aksjedata.
             """
             # Hent data fra Yahoo Finance
-            # yfinance returnerer allerede et DataFrame med riktige kolonnenavn (Open, High, Low, Close, Volume)
             data = yf.download(ticker_symbol, period=data_period)
             
-            # Sorter etter dato (yfinance returnerer ofte sortert, men for sikkerhets skyld)
+            if data.empty:
+                return pd.DataFrame() # Return empty DataFrame if no data
+
+            # Sørg for at indeksen er DatetimeIndex og tidssone-naiv
+            data.index = pd.to_datetime(data.index)
+            if data.index.tz is not None:
+                data.index = data.index.tz_localize(None)
             data = data.sort_index()
 
-            # Sørg for at alle relevante kolonner er numeriske og håndter manglende data
-            # yfinance returnerer vanligvis numeriske data, men dette er en god sikkerhetssjekk
-            for col in ['Open', 'High', 'Low', 'Close', 'Volume']:
-                if col not in data.columns:
-                    raise ValueError(f"Kolonnen '{col}' ble ikke funnet i dataen fra Yahoo Finance. Sjekk ticker-symbolet.")
-                data[col] = pd.to_numeric(data[col], errors='coerce').astype('float64')
-                if data[col].isna().all():
-                    raise ValueError(f"Kolonnen '{col}' inneholder kun ikke-numeriske eller manglende verdier.")
+            # Velg kun de relevante kolonnene og sørg for numerisk type
+            required_cols = ['Open', 'High', 'Low', 'Close', 'Volume']
+            
+            # Sjekk om alle nødvendige kolonner eksisterer
+            missing_cols = [col for col in required_cols if col not in data.columns]
+            if missing_cols:
+                raise ValueError(f"Følgende nødvendige kolonner ble ikke funnet i dataen fra Yahoo Finance: {', '.join(missing_cols)}. Sjekk ticker-symbolet.")
+
+            # Lag en kopi av de valgte kolonnene for å unngå SettingWithCopyWarning
+            data = data[required_cols].copy() 
+
+            for col in required_cols:
+                # Konverter til numerisk, og tving feil til NaN
+                data[col] = pd.to_numeric(data[col], errors='coerce')
+                
+                # Etter å ha tvunget til numerisk, sørg for at dtype er float64.
+                # Hvis en kolonne kun inneholdt NaN, kan pd.to_numeric la den være som 'object'.
+                # Konverter eksplisitt til float64.
+                data[col] = data[col].astype('float64')
+
+                if data[col].isna().all() and len(data) > 0: # Sjekk om alle verdier er NaN for ikke-tomme data
+                    raise ValueError(f"Kolonnen '{col}' inneholder kun ikke-numeriske eller manglende verdier etter konvertering.")
             
             return data
 

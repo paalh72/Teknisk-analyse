@@ -1,112 +1,259 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.graph_objs as go
 import numpy as np
 
 # RSI
-def rsi(close, period=14):
+def rsi(data, period=14):
     try:
-        if not isinstance(close, pd.Series):
-            raise ValueError("Input 'Close' must be a pandas Series")
-        if not pd.api.types.is_numeric_dtype(close):
+        if not isinstance(data['Close'], pd.Series):
+            raise ValueError("Input 'Close' column must be a pandas Series")
+        if not pd.api.types.is_numeric_dtype(data['Close']):
             raise ValueError("Column 'Close' must be numeric for RSI calculation")
-        delta = close.diff()
+        delta = data['Close'].diff()
+        if not isinstance(delta, pd.Series):
+            raise ValueError("Delta from diff() is not a pandas Series")
         gain = delta.where(delta > 0, 0).rolling(window=period, min_periods=1).mean()
         loss = -delta.where(delta < 0, 0).rolling(window=period, min_periods=1).mean()
-        rs = gain / loss.replace(0, np.finfo(float).eps)
+        rs = gain / loss
         result = 100 - (100 / (1 + rs))
+        if not isinstance(result, pd.Series):
+            raise ValueError("RSI result is not a pandas Series")
         return result.astype('float64')
     except Exception as e:
         st.error(f"Error in RSI calculation: {str(e)}")
-        return pd.Series(np.nan, index=close.index, dtype='float64')
+        return pd.Series(np.nan, index=data.index, dtype='float64')
 
 # MA
-def ma(close, period=20):
+def ma(data, period=20):
     try:
-        if not isinstance(close, pd.Series):
-            raise ValueError("Input 'Close' must be a pandas Series")
-        if not pd.api.types.is_numeric_dtype(close):
+        if not isinstance(data['Close'], pd.Series):
+            raise ValueError("Input 'Close' column must be a pandas Series")
+        if not pd.api.types.is_numeric_dtype(data['Close']):
             raise ValueError("Column 'Close' must be numeric for MA calculation")
-        result = close.rolling(window=period, min_periods=1).mean()
+        result = data['Close'].rolling(window=period, min_periods=1).mean()
+        if not isinstance(result, pd.Series):
+            raise ValueError("MA result is not a pandas Series")
         return result.astype('float64')
     except Exception as e:
         st.error(f"Error in MA calculation: {str(e)}")
-        return pd.Series(np.nan, index=close.index, dtype='float64')
+        return pd.Series(np.nan, index=data.index, dtype='float64')
 
 # MFI
-def mfi(high, low, close, volume, period=14):
+def mfi(data, period=14):
     try:
-        if not all(isinstance(col, pd.Series) for col in [high, low, close, volume]):
-            raise ValueError("Input columns must be pandas Series")
-        if not all(pd.api.types.is_numeric_dtype(col) for col in [high, low, close, volume]):
-            raise ValueError("Columns must be numeric for MFI calculation")
-        tp = (high + low + close) / 3
-        mf = tp * volume
+        if not all(isinstance(data[col], pd.Series) for col in ['High', 'Low', 'Close', 'Volume']):
+            raise ValueError("Input columns 'High', 'Low', 'Close', 'Volume' must be pandas Series")
+        if not all(pd.api.types.is_numeric_dtype(data[col]) for col in ['High', 'Low', 'Close', 'Volume']):
+            raise ValueError("Columns 'High', 'Low', 'Close', 'Volume' must be numeric for MFI calculation")
+        tp = (data['High'] + data['Low'] + data['Close']) / 3
+        if not isinstance(tp, pd.Series):
+            raise ValueError("Typical price (tp) is not a pandas Series")
+        mf = tp * data['Volume']
         pos = mf.where(tp > tp.shift(), 0).rolling(window=period, min_periods=1).sum()
         neg = mf.where(tp < tp.shift(), 0).rolling(window=period, min_periods=1).sum()
-        result = 100 - (100 / (1 + pos / neg.replace(0, np.finfo(float).eps)))
+        # Handle division by zero
+        neg = neg.replace(0, np.nan)
+        result = 100 - (100 / (1 + pos / neg))
+        result = result.fillna(50)  # Fill NaN with neutral value
+        if not isinstance(result, pd.Series):
+            raise ValueError("MFI result is not a pandas Series")
         return result.astype('float64')
     except Exception as e:
         st.error(f"Error in MFI calculation: {str(e)}")
-        return pd.Series(np.nan, index=close.index, dtype='float64')
+        return pd.Series(np.nan, index=data.index, dtype='float64')
 
 # MACD
-def macd(close, short=12, long=26, signal=9):
+def macd(data, short=12, long=26, signal=9):
     try:
-        if not isinstance(close, pd.Series):
-            raise ValueError("Input 'Close' must be a pandas Series")
-        if not pd.api.types.is_numeric_dtype(close):
+        if not isinstance(data['Close'], pd.Series):
+            raise ValueError("Input 'Close' column must be a pandas Series")
+        if not pd.api.types.is_numeric_dtype(data['Close']):
             raise ValueError("Column 'Close' must be numeric for MACD calculation")
-        short_ema = close.ewm(span=short, adjust=False).mean()
-        long_ema = close.ewm(span=long, adjust=False).mean()
+        short_ema = data['Close'].ewm(span=short, adjust=False).mean()
+        long_ema = data['Close'].ewm(span=long, adjust=False).mean()
         macd_line = short_ema - long_ema
         sig_line = macd_line.ewm(span=signal, adjust=False).mean()
+        if not (isinstance(macd_line, pd.Series) and isinstance(sig_line, pd.Series)):
+            raise ValueError("MACD or Signal line is not a pandas Series")
         return macd_line.astype('float64'), sig_line.astype('float64')
     except Exception as e:
         st.error(f"Error in MACD calculation: {str(e)}")
-        return pd.Series(np.nan, index=close.index, dtype='float64'), pd.Series(np.nan, index=close.index, dtype='float64')
+        return pd.Series(np.nan, index=data.index, dtype='float64'), pd.Series(np.nan, index=data.index, dtype='float64')
 
 # DeMark 9-13
-def demark(close, index):
+def demark(data):
     try:
-        if not isinstance(close, pd.Series):
-            raise ValueError("Input 'Close' must be a pandas Series")
-        if not pd.api.types.is_numeric_dtype(close):
-            raise ValueError("Column 'Close' must be numeric")
-        setup = pd.Series(0, index=index, dtype='int64')
-        countdown = pd.Series(0, index=index, dtype='int64')
-        c4 = close.shift(4)
-        c2 = close.shift(2)
+        # Ensure required columns exist
+        required_columns = ['Close', 'High', 'Low', 'Volume']
+        if not all(col in data.columns for col in required_columns):
+            raise ValueError(f"DataFrame missing required columns: {', '.join(set(required_columns) - set(data.columns))}")
+        
+        # Ensure columns are numeric
+        for col in required_columns:
+            if not pd.api.types.is_numeric_dtype(data[col]):
+                raise ValueError(f"Column '{col}' must be numeric")
+        
+        # Create a copy to avoid modifying original
+        result_data = data.copy()
+        
+        # Initialize with explicit numpy arrays, then convert to Series
+        result_data["C4"] = pd.Series(data["Close"].shift(4).values, index=data.index, dtype='float64')
+        result_data["C2"] = pd.Series(data["Close"].shift(2).values, index=data.index, dtype='float64')
+        result_data["Setup"] = pd.Series(np.zeros(len(data), dtype='int64'), index=data.index, dtype='int64')
+        result_data["Countdown"] = pd.Series(np.zeros(len(data), dtype='int64'), index=data.index, dtype='int64')
+        
+        # Convert to numpy arrays for faster processing
+        close_vals = result_data["Close"].values
+        c4_vals = result_data["C4"].values
+        c2_vals = result_data["C2"].values
+        setup_vals = np.zeros(len(data), dtype='int64')
+        countdown_vals = np.zeros(len(data), dtype='int64')
+        
+        # Setup calculation
         count = 0
-        for i in range(len(close)):
-            if i < 4:
+        for i in range(len(data)):
+            if i < 4:  # Skip rows where C4 is NaN
                 continue
-            if pd.isna(close.iloc[i]) or pd.isna(c4.iloc[i]):
-                count = 0
-            elif close.iloc[i] > c4.iloc[i]:
-                count += 1
-            else:
-                count = 0
-            setup.iloc[i] = count
+            if not (np.isnan(close_vals[i]) or np.isnan(c4_vals[i])):
+                if close_vals[i] > c4_vals[i]:
+                    count += 1
+                else:
+                    count = 0
+                setup_vals[i] = count
+        
+        # Countdown calculation
         cd = 0
         started = False
-        for i in range(len(close)):
-            if setup.iloc[i] == 9:
+        for i in range(len(data)):
+            if setup_vals[i] == 9:
                 started = True
                 cd = 0
             if started and i >= 2:
-                if pd.isna(close.iloc[i]) or pd.isna(c2.iloc[i]):
-                    cd = 0
-                elif close.iloc[i] > c2.iloc[i]:
-                    cd += 1
-                countdown.iloc[i] = cd
-                if cd == 13:
-                    started = False
-        return setup, countdown
+                if not (np.isnan(close_vals[i]) or np.isnan(c2_vals[i])):
+                    if close_vals[i] > c2_vals[i]:
+                        cd += 1
+                    countdown_vals[i] = cd
+                    if cd == 13:
+                        started = False
+        
+        # Assign back to DataFrame
+        result_data["Setup"] = pd.Series(setup_vals, index=data.index, dtype='int64')
+        result_data["Countdown"] = pd.Series(countdown_vals, index=data.index, dtype='int64')
+        
+        return result_data
     except Exception as e:
         st.error(f"Error in DeMark calculation: {str(e)}")
-        return pd.Series(np.nan, index=index, dtype='int64'), pd.Series(np.nan, index=index, dtype='int64')
+        return data
+
+def bulletproof_arrow_clean(df):
+    """
+    Ultra-aggressive DataFrame cleaning for Arrow compatibility
+    """
+    try:
+        # Create completely new DataFrame with simple range index
+        cleaned_df = pd.DataFrame(index=range(len(df)))
+        
+        # Handle datetime index separately
+        if hasattr(df.index, 'to_pydatetime'):
+            try:
+                cleaned_df['Date'] = pd.to_datetime(df.index).strftime('%Y-%m-%d')
+            except:
+                cleaned_df['Date'] = [f"Row_{i}" for i in range(len(df))]
+        
+        # Process each column with extreme care
+        for col in df.columns:
+            try:
+                series = df[col]
+                
+                # Skip empty columns
+                if len(series) == 0:
+                    continue
+                
+                # Get raw values
+                raw_values = series.values
+                
+                # Handle different data types
+                if pd.api.types.is_datetime64_any_dtype(series):
+                    # Convert datetime to string
+                    try:
+                        cleaned_df[col] = pd.to_datetime(raw_values).strftime('%Y-%m-%d %H:%M:%S')
+                    except:
+                        cleaned_df[col] = [str(x) for x in raw_values]
+                        
+                elif pd.api.types.is_numeric_dtype(series):
+                    # Handle numeric data
+                    try:
+                        # Convert to float64, handling all edge cases
+                        numeric_values = pd.to_numeric(raw_values, errors='coerce')
+                        
+                        # Replace infinite values
+                        numeric_values = numeric_values.replace([np.inf, -np.inf], np.nan)
+                        
+                        # Fill NaN values
+                        numeric_values = numeric_values.fillna(0.0)
+                        
+                        # Ensure it's proper float64
+                        cleaned_df[col] = np.array(numeric_values, dtype=np.float64)
+                        
+                    except:
+                        # Fallback: convert to string
+                        cleaned_df[col] = [str(x) for x in raw_values]
+                        
+                else:
+                    # Everything else becomes string
+                    try:
+                        cleaned_df[col] = [str(x) if x is not None else '' for x in raw_values]
+                    except:
+                        cleaned_df[col] = [''] * len(raw_values)
+                        
+            except Exception as col_error:
+                # Skip problematic columns
+                st.warning(f"Skipping column {col}: {str(col_error)}")
+                continue
+        
+        # Final validation and type enforcement
+        for col in list(cleaned_df.columns):
+            try:
+                # Check if column is problematic for Arrow
+                test_series = cleaned_df[col]
+                
+                # Try to convert to Arrow-compatible type
+                if test_series.dtype == 'object':
+                    # Try numeric conversion first
+                    try:
+                        numeric_test = pd.to_numeric(test_series, errors='coerce')
+                        if numeric_test.notna().sum() > len(test_series) * 0.5:  # If >50% are numbers
+                            cleaned_df[col] = numeric_test.fillna(0.0).astype(np.float64)
+                        else:
+                            # Keep as string but ensure all values are strings
+                            cleaned_df[col] = test_series.astype(str)
+                    except:
+                        cleaned_df[col] = test_series.astype(str)
+                        
+                elif test_series.dtype not in ['float64', 'int64', 'bool', 'datetime64[ns]']:
+                    # Convert to float64 if possible, otherwise string
+                    try:
+                        cleaned_df[col] = pd.to_numeric(test_series, errors='coerce').fillna(0.0).astype(np.float64)
+                    except:
+                        cleaned_df[col] = test_series.astype(str)
+                        
+            except Exception as final_error:
+                # Remove problematic columns entirely
+                st.warning(f"Removing column {col}: {str(final_error)}")
+                cleaned_df = cleaned_df.drop(columns=[col])
+        
+        # Ensure we have some data
+        if cleaned_df.empty:
+            st.error("No data could be processed for display")
+            return pd.DataFrame({'Error': ['No displayable data']})
+        
+        return cleaned_df
+        
+    except Exception as e:
+        st.error(f"Critical error in data cleaning: {str(e)}")
+        return pd.DataFrame({'Error': [str(e)]})
 
 # App UI
 st.title("📈 Teknisk analyse – Oslo Børs")
@@ -115,22 +262,52 @@ period = st.selectbox("Periode", ["3mo", "6mo", "1y", "2y"], index=1)
 
 if ticker:
     try:
+        # Cache data fetching to avoid repeated API calls
+        @st.cache_data
         def fetch_data(ticker, period):
-            data = yf.download(ticker, period=period, interval="1d", auto_adjust=False, prepost=False, threads=False)
-            if data.empty:
+            try:
+                # Use more conservative yfinance settings
+                data = yf.download(
+                    ticker, 
+                    period=period, 
+                    interval="1d", 
+                    auto_adjust=False,
+                    prepost=False,
+                    threads=False  # Disable threading for stability
+                )
+                
+                # Basic validation
+                if data.empty:
+                    return pd.DataFrame()
+                
+                # Clean data immediately after download
+                data = data.dropna(how='all')  # Remove completely empty rows
+                
+                # Ensure proper column types from the start
+                numeric_columns = ['Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close']
+                for col in numeric_columns:
+                    if col in data.columns:
+                        data[col] = pd.to_numeric(data[col], errors='coerce').astype('float64')
+                
+                # Remove any rows with all NaN values in essential columns
+                essential_cols = ['Close', 'High', 'Low', 'Volume']
+                available_essential = [col for col in essential_cols if col in data.columns]
+                if available_essential:
+                    data = data.dropna(subset=available_essential, how='all')
+                
+                return data
+                
+            except Exception as e:
+                st.error(f"Error fetching data: {str(e)}")
                 return pd.DataFrame()
-            data = data.dropna(how='all')
-            data.index = pd.to_datetime(data.index, utc=True).tz_convert(None)
-            numeric_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
-            for col in numeric_columns:
-                if col in data.columns:
-                    data[col] = pd.to_numeric(data[col], errors='coerce').astype('float64')
-            return data
 
-        data = fetch_data(ticker, period)
-        if data.empty:
+        raw_data = fetch_data(ticker, period)
+        if raw_data.empty:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
+            # Work with a copy
+            data = raw_data.copy()
+            
             # Validate essential columns
             essential_columns = ['Close', 'High', 'Low', 'Volume']
             for col in essential_columns:
@@ -140,138 +317,175 @@ if ticker:
                     raise ValueError(f"Column '{col}' is not numeric")
                 if data[col].isna().all():
                     raise ValueError(f"Column '{col}' contains only missing values")
-
-            # Calculate indicators
-            index = data.index.to_pydatetime()
-            close = data['Close'].to_numpy()
-            high = data['High'].to_numpy()
-            low = data['Low'].to_numpy()
-            volume = data['Volume'].to_numpy()
-            setup, countdown = demark(pd.Series(data['Close'], index=data.index), data.index)
-            rsi_data = rsi(pd.Series(data['Close'], index=data.index))
-            ma_data = ma(pd.Series(data['Close'], index=data.index))
-            mfi_data = mfi(pd.Series(data['High'], index=data.index), 
-                          pd.Series(data['Low'], index=data.index), 
-                          pd.Series(data['Close'], index=data.index), 
-                          pd.Series(data['Volume'], index=data.index))
-            macd_data, signal_data = macd(pd.Series(data['Close'], index=data.index))
-            vol_ma = pd.Series(data['Volume'], index=data.index).rolling(window=20, min_periods=1).mean().to_numpy()
+            
+            # Calculate technical indicators
+            data = demark(data)
+            data["RSI"] = rsi(data)
+            data["MA20"] = ma(data)
+            data["MFI"] = mfi(data)
+            data["MACD"], data["SIGNAL"] = macd(data)
+            data["VolMA"] = data["Volume"].rolling(window=20, min_periods=1).mean().astype('float64')
 
             # Pris + DeMark
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.plot(index, close, label="Close", color="#1f77b4")
-            if ma_data is not None:
-                ax.plot(index, ma_data.to_numpy(), label="MA20", linestyle="--", color="#ff7f0e")
-            if setup is not None and countdown is not None:
-                setup_9 = setup[setup == 9].index.to_pydatetime()
-                countdown_13 = countdown[countdown == 13].index.to_pydatetime()
-                if len(setup_9) > 0:
-                    ax.scatter(setup_9, close[setup.index.isin(setup_9)], 
-                              color="green", s=50, label="Setup 9")
-                    for x, y in zip(setup_9, close[setup.index.isin(setup_9)]):
-                        ax.text(x, y, "9", fontsize=8, verticalalignment="bottom")
-                if len(countdown_13) > 0:
-                    ax.scatter(countdown_13, close[countdown.index.isin(countdown_13)], 
-                              color="red", s=50, label="Countdown 13")
-                    for x, y in zip(countdown_13, close[countdown.index.isin(countdown_13)]):
-                        ax.text(x, y, "13", fontsize=8, verticalalignment="bottom")
-            ax.set_title(f"{ticker} - Pris og DeMark signaler")
-            ax.set_xlabel("Dato")
-            ax.set_ylabel("Pris")
-            ax.legend()
-            ax.grid(True)
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-            st.pyplot(fig)
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(x=data.index, y=data["Close"], name="Close", showlegend=True))
+            fig.add_trace(go.Scatter(x=data.index, y=data["MA20"], name="MA20", line=dict(dash="dot"), showlegend=True))
+            
+            # Add DeMark signals
+            setup_9_indices = data[data["Setup"] == 9].index
+            countdown_13_indices = data[data["Countdown"] == 13].index
+            
+            if len(setup_9_indices) > 0:
+                fig.add_trace(go.Scatter(
+                    x=setup_9_indices, 
+                    y=data.loc[setup_9_indices, "Close"], 
+                    text=["9"] * len(setup_9_indices), 
+                    mode="markers+text", 
+                    marker=dict(color="green", size=10),
+                    name="Setup 9",
+                    showlegend=True
+                ))
+            
+            if len(countdown_13_indices) > 0:
+                fig.add_trace(go.Scatter(
+                    x=countdown_13_indices, 
+                    y=data.loc[countdown_13_indices, "Close"], 
+                    text=["13"] * len(countdown_13_indices), 
+                    mode="markers+text", 
+                    marker=dict(color="red", size=10),
+                    name="Countdown 13",
+                    showlegend=True
+                ))
+            
+            fig.update_layout(title=f"{ticker} - Pris og DeMark signaler")
+            st.plotly_chart(fig, use_container_width=True)
 
             # RSI
-            if rsi_data is not None:
-                st.subheader("RSI")
-                rsi_data = rsi_data.to_numpy()
-                if not np.isnan(rsi_data).all():
-                    fig, ax = plt.subplots(figsize=(10, 4))
-                    ax.plot(index, rsi_data, label="RSI", color="#1f77b4")
-                    ax.axhline(y=70, linestyle="--", color="red", label="Overkjøpt (70)")
-                    ax.axhline(y=30, linestyle="--", color="green", label="Oversolgt (30)")
-                    ax.set_title("RSI")
-                    ax.set_xlabel("Dato")
-                    ax.set_ylabel("RSI")
-                    ax.set_ylim(0, 100)
-                    ax.legend()
-                    ax.grid(True)
-                    plt.xticks(rotation=45)
-                    plt.tight_layout()
-                    st.pyplot(fig)
-                else:
-                    st.warning("RSI data contains only NaN values")
+            st.subheader("RSI")
+            rsi_fig = go.Figure()
+            rsi_fig.add_trace(go.Scatter(x=data.index, y=data["RSI"], name="RSI"))
+            rsi_fig.add_hline(y=70, line_dash="dash", line_color="red", annotation_text="Overkjøpt (70)")
+            rsi_fig.add_hline(y=30, line_dash="dash", line_color="green", annotation_text="Oversolgt (30)")
+            rsi_fig.update_layout(title="RSI", yaxis_range=[0, 100])
+            st.plotly_chart(rsi_fig, use_container_width=True)
 
             # MACD
-            if macd_data is not None and signal_data is not None:
-                st.subheader("MACD")
-                macd_data = macd_data.to_numpy()
-                signal_data = signal_data.to_numpy()
-                if not (np.isnan(macd_data).all() or np.isnan(signal_data).all()):
-                    fig, ax = plt.subplots(figsize=(10, 4))
-                    ax.plot(index, macd_data, label="MACD", color="#1f77b4")
-                    ax.plot(index, signal_data, label="Signal", linestyle="--", color="#ff7f0e")
-                    ax.axhline(y=0, linestyle="--", color="gray")
-                    ax.set_title("MACD")
-                    ax.set_xlabel("Dato")
-                    ax.set_ylabel("MACD")
-                    ax.legend()
-                    ax.grid(True)
-                    plt.xticks(rotation=45)
-                    plt.tight_layout()
-                    st.pyplot(fig)
-                else:
-                    st.warning("MACD or Signal data contains only NaN values")
+            st.subheader("MACD")
+            macd_fig = go.Figure()
+            macd_fig.add_trace(go.Scatter(x=data.index, y=data["MACD"], name="MACD"))
+            macd_fig.add_trace(go.Scatter(x=data.index, y=data["SIGNAL"], name="Signal", line=dict(dash="dot")))
+            macd_fig.add_hline(y=0, line_dash="dash", line_color="gray")
+            macd_fig.update_layout(title="MACD")
+            st.plotly_chart(macd_fig, use_container_width=True)
 
             # MFI
-            if mfi_data is not None:
-                st.subheader("MFI (Money Flow Index)")
-                mfi_data = mfi_data.to_numpy()
-                if not np.isnan(mfi_data).all():
-                    fig, ax = plt.subplots(figsize=(10, 4))
-                    ax.plot(index, mfi_data, label="MFI", color="#1f77b4")
-                    ax.axhline(y=80, linestyle="--", color="red", label="Overkjøpt (80)")
-                    ax.axhline(y=20, linestyle="--", color="green", label="Oversolgt (20)")
-                    ax.set_title("MFI")
-                    ax.set_xlabel("Dato")
-                    ax.set_ylabel("MFI")
-                    ax.set_ylim(0, 100)
-                    ax.legend()
-                    ax.grid(True)
-                    plt.xticks(rotation=45)
-                    plt.tight_layout()
-                    st.pyplot(fig)
-                else:
-                    st.warning("MFI data contains only NaN values")
+            st.subheader("MFI (Money Flow Index)")
+            mfi_fig = go.Figure()
+            mfi_fig.add_trace(go.Scatter(x=data.index, y=data["MFI"], name="MFI"))
+            mfi_fig.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="Overkjøpt (80)")
+            mfi_fig.add_hline(y=20, line_dash="dash", line_color="green", annotation_text="Oversolgt (20)")
+            mfi_fig.update_layout(title="MFI", yaxis_range=[0, 100])
+            st.plotly_chart(mfi_fig, use_container_width=True)
 
             # Volume
             st.subheader("Volum og snitt")
-            fig, ax = plt.subplots(figsize=(10, 4))
-            ax.bar(index, volume, label="Volume", color="#1f77b4", alpha=0.5)
-            ax.plot(index, vol_ma, label="VolMA", color="orange")
-            ax.set_title("Volum")
-            ax.set_xlabel("Dato")
-            ax.set_ylabel("Volum")
-            ax.legend()
-            ax.grid(True)
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-            st.pyplot(fig)
+            vfig = go.Figure()
+            vfig.add_trace(go.Bar(x=data.index, y=data["Volume"], name="Volume"))
+            vfig.add_trace(go.Scatter(x=data.index, y=data["VolMA"], name="VolMA", line=dict(color="orange")))
+            vfig.update_layout(title="Volum")
+            st.plotly_chart(vfig, use_container_width=True)
 
-            # Summary statistics
+            # Display summary statistics
             st.subheader("Siste verdier")
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Pris", f"{close[-1]:.2f}" if not np.isnan(close[-1]) else "N/A")
+                st.metric("Pris", f"{data['Close'].iloc[-1]:.2f}")
             with col2:
-                st.metric("RSI", f"{rsi_data[-1]:.1f}" if rsi_data is not None and not np.isnan(rsi_data[-1]) else "N/A")
+                st.metric("RSI", f"{data['RSI'].iloc[-1]:.1f}")
             with col3:
-                st.metric("MFI", f"{mfi_data[-1]:.1f}" if mfi_data is not None and not np.isnan(mfi_data[-1]) else "N/A")
+                st.metric("MFI", f"{data['MFI'].iloc[-1]:.1f}")
             with col4:
-                st.metric("MACD", f"{macd_data[-1]:.4f}" if macd_data is not None and not np.isnan(macd_data[-1]) else "N/A")
+                st.metric("MACD", f"{data['MACD'].iloc[-1]:.4f}")
+            
+            # Show dataframe with improved error handling
+            if st.checkbox("Vis rådata"):
+                st.write(f"**Dataframe info:** {data.shape[0]} rader, {data.shape[1]} kolonner")
+                
+                try:
+                    # Clean the data for display
+                    display_data = bulletproof_arrow_clean(data)
+                    
+                    # Try different display methods
+                    if not display_data.empty:
+                        st.write("**Komplett dataset:**")
+                        
+                        # Method 1: Try st.dataframe with container width
+                        try:
+                            st.dataframe(display_data, use_container_width=True, height=400)
+                        except Exception as e1:
+                            st.warning(f"st.dataframe failed: {str(e1)[:100]}...")
+                            
+                            # Method 2: Try showing limited rows
+                            try:
+                                st.write("**Siste 20 rader:**")
+                                limited_data = display_data.tail(20)
+                                st.dataframe(limited_data, use_container_width=True)
+                            except Exception as e2:
+                                st.warning(f"Limited dataframe failed: {str(e2)[:100]}...")
+                                
+                                # Method 3: Show as table
+                                try:
+                                    st.write("**Tabell format (siste 10 rader):**")
+                                    table_data = display_data.tail(10)
+                                    st.table(table_data)
+                                except Exception as e3:
+                                    st.warning(f"Table display failed: {str(e3)[:100]}...")
+                                    
+                                    # Method 4: Manual display
+                                    st.write("**Grunnleggende informasjon:**")
+                                    st.write(f"- Antall rader: {len(display_data)}")
+                                    st.write(f"- Antall kolonner: {len(display_data.columns)}")
+                                    st.write(f"- Kolonner: {list(display_data.columns)}")
+                                    
+                                    # Show some sample data
+                                    st.write("**Eksempel data (siste rader):**")
+                                    for i, (idx, row) in enumerate(display_data.tail(5).iterrows()):
+                                        if i < 3:  # Show only first 3 rows
+                                            st.write(f"Rad {idx}: {dict(row)}")
+                    else:
+                        st.error("Ingen data kunne vises")
+                        
+                except Exception as main_error:
+                    st.error(f"Kunne ikke vise data: {str(main_error)}")
+                    
+                    # Fallback: Show basic info
+                    st.write("**Debug informasjon:**")
+                    st.write(f"- DataFrame shape: {data.shape}")
+                    st.write(f"- Columns: {list(data.columns)}")
+                    st.write(f"- Data types: {dict(data.dtypes)}")
+                    st.write(f"- Memory usage: {data.memory_usage(deep=True).sum() / 1024 / 1024:.2f} MB")
 
     except Exception as e:
         st.error(f"En feil oppstod: {str(e)}")
+        st.error("Prøv å oppfriske siden eller velg en annen ticker.")
+        
+        # Debug information
+        if st.checkbox("Vis debug info"):
+            st.write("**Debug informasjon:**")
+            st.write(f"Ticker: {ticker}")
+            st.write(f"Period: {period}")
+            st.write(f"Error type: {type(e).__name__}")
+            st.write(f"Error message: {str(e)}")
+            
+            # Show Python/Streamlit version info
+            import sys
+            st.write(f"Python version: {sys.version}")
+            st.write(f"Streamlit version: {st.__version__}")
+            
+            # Show available memory
+            try:
+                import psutil
+                memory = psutil.virtual_memory()
+                st.write(f"Available memory: {memory.available / 1024 / 1024 / 1024:.2f} GB")
+            except:
+                st.write("Could not get memory info")

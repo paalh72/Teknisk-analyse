@@ -155,44 +155,46 @@ def demark(data):
 
 def clean_dataframe_for_arrow(df):
     """
-    Aggressive DataFrame cleaning specifically for Arrow/Streamlit compatibility
+    Ultra-aggressive DataFrame cleaning specifically for Arrow/Streamlit compatibility
     """
     df = df.copy()
     
     # Step 1: Replace all infinite values with NaN
     df = df.replace([np.inf, -np.inf], np.nan)
     
-    # Step 2: Handle each column individually
-    for col in df.columns:
-        original_dtype = df[col].dtype
-        
-        # Handle datetime columns
-        if pd.api.types.is_datetime64_any_dtype(df[col]):
-            continue  # Keep datetime as is
-        
-        # Handle numeric columns
-        elif pd.api.types.is_numeric_dtype(df[col]):
-            # Convert to standard float64 or int64
-            if original_dtype in ['float16', 'float32'] or 'Float' in str(original_dtype):
-                df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
-            elif original_dtype in ['int8', 'int16', 'int32'] or 'Int' in str(original_dtype):
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('int64')
-            else:
-                df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
-        
-        # Handle object columns
-        else:
-            # Try to convert to numeric first
-            numeric_series = pd.to_numeric(df[col], errors='coerce')
-            
-            # If more than 80% of values are valid numbers, treat as numeric
-            if numeric_series.notna().sum() > len(df) * 0.8:
-                df[col] = numeric_series.astype('float64')
-            else:
-                # Convert to standard string
-                df[col] = df[col].astype(str)
+    # Step 2: Force reset index to ensure no index issues
+    if not isinstance(df.index, pd.RangeIndex):
+        df = df.reset_index()
     
-    # Step 3: Specific column type enforcement
+    # Step 3: Brutally force each column to proper types
+    for col in df.columns:
+        try:
+            # Skip datetime columns
+            if pd.api.types.is_datetime64_any_dtype(df[col]):
+                continue
+            
+            # For any column that might be numeric, force conversion
+            try:
+                # First, convert to string to eliminate any dtype issues
+                temp_series = df[col].astype(str)
+                # Then convert to numeric
+                numeric_series = pd.to_numeric(temp_series, errors='coerce')
+                
+                # If we get mostly valid numbers, use them
+                if numeric_series.notna().sum() > len(df) * 0.7:
+                    df[col] = numeric_series.astype('float64')
+                else:
+                    # Force to string if not numeric
+                    df[col] = temp_series.astype(str)
+            except:
+                # If all else fails, force to string
+                df[col] = df[col].astype(str)
+                
+        except Exception as e:
+            # Emergency fallback - convert to string
+            df[col] = df[col].astype(str)
+    
+    # Step 4: Specific column type enforcement for known numeric columns
     float_cols = ['Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close', 
                   'C4', 'C2', 'RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL', 'VolMA']
     int_cols = ['Setup', 'Countdown']
@@ -200,28 +202,60 @@ def clean_dataframe_for_arrow(df):
     # Enforce float columns
     for col in float_cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
+            try:
+                df[col] = pd.to_numeric(df[col].astype(str), errors='coerce').astype('float64')
+            except:
+                df[col] = pd.Series(0.0, index=df.index, dtype='float64')
     
     # Enforce integer columns
     for col in int_cols:
         if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('int64')
+            try:
+                df[col] = pd.to_numeric(df[col].astype(str), errors='coerce').fillna(0).astype('int64')
+            except:
+                df[col] = pd.Series(0, index=df.index, dtype='int64')
     
-    # Step 4: Final safety check - no problematic dtypes should remain
+    # Step 5: Final ultra-aggressive cleanup
     for col in df.columns:
         dtype_str = str(df[col].dtype)
+        
+        # Handle any remaining problematic dtypes
         if dtype_str == 'object':
-            df[col] = df[col].astype(str)
-        elif 'Float' in dtype_str or 'Int' in dtype_str:
-            # These are pandas nullable dtypes that can cause Arrow issues
-            if 'Float' in dtype_str:
-                df[col] = df[col].astype('float64')
-            else:
-                df[col] = df[col].astype('int64')
+            try:
+                # Last attempt to convert to numeric
+                numeric_attempt = pd.to_numeric(df[col], errors='coerce')
+                if numeric_attempt.notna().sum() > 0:
+                    df[col] = numeric_attempt.astype('float64')
+                else:
+                    df[col] = df[col].astype(str)
+            except:
+                df[col] = df[col].astype(str)
+        
+        elif 'Float' in dtype_str or 'Int' in dtype_str or 'complex' in dtype_str:
+            # Convert any pandas extension dtypes or complex types
+            try:
+                df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
+            except:
+                df[col] = pd.Series(0.0, index=df.index, dtype='float64')
     
-    # Step 5: Round floating point numbers to avoid precision issues
+    # Step 6: Handle NaN values more aggressively
+    # Replace NaN in numeric columns with 0
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df[numeric_cols] = df[numeric_cols].fillna(0)
+    
+    # Replace NaN in string columns with empty string
+    string_cols = df.select_dtypes(include=['object']).columns
+    df[string_cols] = df[string_cols].fillna('')
+    
+    # Step 7: Round floating point numbers to avoid precision issues
     float_columns = df.select_dtypes(include=['float64']).columns
     df[float_columns] = df[float_columns].round(8)
+    
+    # Step 8: Final validation - ensure no problematic types remain
+    for col in df.columns:
+        if df[col].dtype not in ['float64', 'int64', 'object', 'datetime64[ns]', 'bool']:
+            # Force to float64 as last resort
+            df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
     
     return df
 
@@ -378,22 +412,53 @@ if ticker:
             # Show dataframe with improved error handling
             if st.checkbox("Vis rådata"):
                 try:
-                    # Create a safe display version
-                    display_data = clean_dataframe_for_arrow(data)
+                    # Create a completely new DataFrame for display
+                    display_data = pd.DataFrame()
                     
-                    # Additional safety for display
-                    display_data = display_data.fillna(0)  # Replace any remaining NaN
+                    # Copy data column by column with extreme safety
+                    for col in data.columns:
+                        try:
+                            if pd.api.types.is_datetime64_any_dtype(data[col]):
+                                display_data[col] = data[col]
+                            elif pd.api.types.is_numeric_dtype(data[col]):
+                                # Convert to basic numpy types
+                                display_data[col] = pd.to_numeric(data[col], errors='coerce').astype('float64')
+                            else:
+                                display_data[col] = data[col].astype(str)
+                        except:
+                            # Emergency fallback
+                            display_data[col] = data[col].astype(str)
+                    
+                    # Fill any remaining NaN values
+                    display_data = display_data.fillna(0)
                     
                     # Show basic info first
                     st.write(f"**Dataframe info:** {display_data.shape[0]} rader, {display_data.shape[1]} kolonner")
                     
-                    # Try to display - use st.table as fallback if st.dataframe fails
-                    try:
-                        st.dataframe(display_data, use_container_width=True)
-                    except Exception as df_error:
-                        st.warning(f"st.dataframe failed ({str(df_error)}), using st.table instead")
-                        # Show only last 20 rows if using st.table to avoid performance issues
-                        st.table(display_data.tail(20))
+                    # Debug info about dtypes
+                    st.write("**Column types:**")
+                    for col in display_data.columns:
+                        st.write(f"  - {col}: {display_data[col].dtype}")
+                    
+                    # Try multiple display methods
+                    display_methods = [
+                        ("st.dataframe", lambda: st.dataframe(display_data, use_container_width=True)),
+                        ("st.table (last 20)", lambda: st.table(display_data.tail(20))),
+                        ("st.write", lambda: st.write(display_data))
+                    ]
+                    
+                    for method_name, method_func in display_methods:
+                        try:
+                            st.write(f"**Using {method_name}:**")
+                            method_func()
+                            break  # If successful, stop trying other methods
+                        except Exception as method_error:
+                            st.warning(f"{method_name} failed: {str(method_error)}")
+                            continue
+                    else:
+                        # If all display methods fail, show raw data info
+                        st.error("All display methods failed. Showing data summary:")
+                        st.write(display_data.describe())
                         
                 except Exception as e:
                     st.error(f"Kunne ikke vise dataframe: {str(e)}")
@@ -403,6 +468,8 @@ if ticker:
                     st.write("**Data types:**")
                     for col, dtype in data.dtypes.items():
                         st.write(f"  - {col}: {dtype}")
+                    st.write("**Sample data:**")
+                    st.write(data.head())
 
     except Exception as e:
         st.error(f"En feil oppstod: {str(e)}")

@@ -9,11 +9,18 @@ def rsi(data, period=14):
     try:
         if not isinstance(data['Close'], pd.Series):
             raise ValueError("Input 'Close' column must be a pandas Series")
+        if not pd.api.types.is_numeric_dtype(data['Close']):
+            raise ValueError("Column 'Close' must be numeric for RSI calculation")
         delta = data['Close'].diff()
+        if not isinstance(delta, pd.Series):
+            raise ValueError("Delta from diff() is not a pandas Series")
         gain = delta.where(delta > 0, 0).rolling(window=period, min_periods=1).mean()
         loss = -delta.where(delta < 0, 0).rolling(window=period, min_periods=1).mean()
         rs = gain / loss
-        return 100 - (100 / (1 + rs))
+        result = 100 - (100 / (1 + rs))
+        if not isinstance(result, pd.Series):
+            raise ValueError("RSI result is not a pandas Series")
+        return result
     except Exception as e:
         st.error(f"Error in RSI calculation: {str(e)}")
         return pd.Series(np.nan, index=data.index)
@@ -23,7 +30,12 @@ def ma(data, period=20):
     try:
         if not isinstance(data['Close'], pd.Series):
             raise ValueError("Input 'Close' column must be a pandas Series")
-        return data['Close'].rolling(window=period, min_periods=1).mean()
+        if not pd.api.types.is_numeric_dtype(data['Close']):
+            raise ValueError("Column 'Close' must be numeric for MA calculation")
+        result = data['Close'].rolling(window=period, min_periods=1).mean()
+        if not isinstance(result, pd.Series):
+            raise ValueError("MA result is not a pandas Series")
+        return result
     except Exception as e:
         st.error(f"Error in MA calculation: {str(e)}")
         return pd.Series(np.nan, index=data.index)
@@ -33,11 +45,18 @@ def mfi(data, period=14):
     try:
         if not all(isinstance(data[col], pd.Series) for col in ['High', 'Low', 'Close', 'Volume']):
             raise ValueError("Input columns 'High', 'Low', 'Close', 'Volume' must be pandas Series")
+        if not all(pd.api.types.is_numeric_dtype(data[col]) for col in ['High', 'Low', 'Close', 'Volume']):
+            raise ValueError("Columns 'High', 'Low', 'Close', 'Volume' must be numeric for MFI calculation")
         tp = (data['High'] + data['Low'] + data['Close']) / 3
+        if not isinstance(tp, pd.Series):
+            raise ValueError("Typical price (tp) is not a pandas Series")
         mf = tp * data['Volume']
         pos = mf.where(tp > tp.shift(), 0).rolling(window=period, min_periods=1).sum()
         neg = mf.where(tp < tp.shift(), 0).rolling(window=period, min_periods=1).sum()
-        return 100 - (100 / (1 + pos / neg))
+        result = 100 - (100 / (1 + pos / neg))
+        if not isinstance(result, pd.Series):
+            raise ValueError("MFI result is not a pandas Series")
+        return result
     except Exception as e:
         st.error(f"Error in MFI calculation: {str(e)}")
         return pd.Series(np.nan, index=data.index)
@@ -47,10 +66,14 @@ def macd(data, short=12, long=26, signal=9):
     try:
         if not isinstance(data['Close'], pd.Series):
             raise ValueError("Input 'Close' column must be a pandas Series")
+        if not pd.api.types.is_numeric_dtype(data['Close']):
+            raise ValueError("Column 'Close' must be numeric for MACD calculation")
         short_ema = data['Close'].ewm(span=short, adjust=False).mean()
         long_ema = data['Close'].ewm(span=long, adjust=False).mean()
         macd_line = short_ema - long_ema
         sig_line = macd_line.ewm(span=signal, adjust=False).mean()
+        if not (isinstance(macd_line, pd.Series) and isinstance(sig_line, pd.Series)):
+            raise ValueError("MACD or Signal line is not a pandas Series")
         return macd_line, sig_line
     except Exception as e:
         st.error(f"Error in MACD calculation: {str(e)}")
@@ -139,16 +162,17 @@ if ticker:
         if data.empty:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
+            # Debug: Inspect raw data
+            st.write("Data columns:", data.columns)
+            st.write("Data types:", data.dtypes)
+            st.write("First few rows:", data.head())
+
             # Ensure numeric columns
             numeric_columns = ['Close', 'High', 'Low', 'Volume']
             for col in numeric_columns:
                 data[col] = pd.to_numeric(data[col], errors='coerce')
                 if data[col].isna().all():
                     raise ValueError(f"Column '{col}' contains only non-numeric or missing values after conversion")
-            
-            # Debug: Inspect data
-            # st.write("Data columns:", data.columns)
-            # st.write("First few rows:", data.head())
             
             # Check if Close is numeric
             if not pd.api.types.is_numeric_dtype(data['Close']):

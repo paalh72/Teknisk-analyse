@@ -4,7 +4,7 @@ import pandas as pd
 import plotly.graph_objs as go
 import numpy as np
 
-# DeMark 9-13 (Simplified)
+# DeMark 9-13
 def demark(close_series):
     try:
         if not isinstance(close_series, pd.Series):
@@ -95,4 +95,38 @@ if ticker:
 
             # Plot Close price with DeMark signals
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=dates, y=close, name="Close", line=dict(color="#1f
+            fig.add_trace(go.Scatter(x=dates, y=close, name="Close", line=dict(color="#1f77b4")))
+            setup_9_mask = setup == 9
+            countdown_13_mask = countdown == 13
+            if np.any(setup_9_mask):
+                fig.add_trace(go.Scatter(
+                    x=dates[setup_9_mask], 
+                    y=close[setup_9_mask], 
+                    text=["9"] * np.sum(setup_9_mask), 
+                    mode="markers+text", 
+                    marker=dict(color="green", size=10),
+                    name="Setup 9"
+                ))
+            if np.any(countdown_13_mask):
+                fig.add_trace(go.Scatter(
+                    x=dates[countdown_13_mask], 
+                    y=close[countdown_13_mask], 
+                    text=["13"] * np.sum(countdown_13_mask), 
+                    mode="markers+text", 
+                    marker=dict(color="red", size=10),
+                    name="Countdown 13"
+                ))
+            fig.update_layout(
+                title=f"{ticker} - Pris og DeMark signaler",
+                xaxis_title="Dato",
+                yaxis_title="Pris",
+                showlegend=True
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+            # Summary statistic
+            st.subheader("Siste verdi")
+            st.metric("Pris", f"{close[-1]:.2f}" if not np.isnan(close[-1]) else "N/A")
+
+    except Exception as e:
+        st.error(f"En feil oppstod: {str(e)}")

@@ -154,10 +154,34 @@ def clean_dataframe(df):
     """Clean DataFrame to prevent Arrow serialization errors"""
     df = df.copy()
     
+    # Debug: Print column info before cleaning
+    st.write("Debug - Column dtypes before cleaning:")
+    for col in df.columns:
+        st.write(f"{col}: {df[col].dtype}")
+    
     # Replace infinite values with NaN
     df = df.replace([np.inf, -np.inf], np.nan)
     
-    # Define expected column types
+    # Force conversion of all columns to proper types
+    for col in df.columns:
+        if df[col].dtype == 'object':
+            # Check if column contains mixed types
+            sample_values = df[col].dropna().head(10).tolist()
+            st.write(f"Debug - Sample values for {col}: {sample_values}")
+            
+            # Try to convert to numeric
+            try:
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+                if df[col].isna().all():
+                    # If all values become NaN, it's probably text
+                    df[col] = df[col].astype('string')
+                else:
+                    df[col] = df[col].astype('float64')
+            except:
+                # If conversion fails, force to string
+                df[col] = df[col].astype('string')
+    
+    # Define expected column types and force them
     float_cols = ['Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close', 
                   'C4', 'C2', 'RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL', 'VolMA']
     int_cols = ['Setup', 'Countdown']
@@ -172,15 +196,16 @@ def clean_dataframe(df):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('int64')
     
-    # Handle any remaining object columns
+    # Final check - ensure no object columns remain
     for col in df.columns:
         if df[col].dtype == 'object':
-            # Try to convert to numeric first
-            try:
-                df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
-            except:
-                # If that fails, convert to string
-                df[col] = df[col].astype('string')
+            st.warning(f"Column {col} still has object dtype, forcing to string")
+            df[col] = df[col].astype('string')
+    
+    # Debug: Print column info after cleaning
+    st.write("Debug - Column dtypes after cleaning:")
+    for col in df.columns:
+        st.write(f"{col}: {df[col].dtype}")
     
     return df
 
@@ -307,6 +332,33 @@ if ticker:
                 st.metric("MFI", f"{data['MFI'].iloc[-1]:.1f}")
             with col4:
                 st.metric("MACD", f"{data['MACD'].iloc[-1]:.4f}")
+            
+            # Only show dataframe if explicitly requested (to avoid Arrow errors)
+            if st.checkbox("Vis rådata (kan være treg)"):
+                try:
+                    # Create a display-safe version of the dataframe
+                    display_data = data.copy()
+                    
+                    # Force all columns to basic types
+                    for col in display_data.columns:
+                        if display_data[col].dtype == 'object':
+                            display_data[col] = display_data[col].astype(str)
+                        elif 'float' in str(display_data[col].dtype):
+                            display_data[col] = display_data[col].astype('float64')
+                        elif 'int' in str(display_data[col].dtype):
+                            display_data[col] = display_data[col].astype('int64')
+                    
+                    # Round floating point numbers to avoid precision issues
+                    float_cols = display_data.select_dtypes(include=['float64']).columns
+                    display_data[float_cols] = display_data[float_cols].round(6)
+                    
+                    st.dataframe(display_data)
+                except Exception as e:
+                    st.error(f"Kunne ikke vise dataframe: {str(e)}")
+                    st.write("Dataframe info:")
+                    st.write(f"Shape: {data.shape}")
+                    st.write(f"Columns: {list(data.columns)}")
+                    st.write(f"Dtypes: {data.dtypes.to_dict()}")
 
     except Exception as e:
         st.error(f"En feil oppstod: {str(e)}")

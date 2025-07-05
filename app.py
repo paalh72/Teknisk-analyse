@@ -34,23 +34,17 @@ def macd(data, short=12, long=26, signal=9):
 # DeMark 9-13
 def demark(data):
     data["C4"] = data["Close"].shift(4)
-    data["C2"] = data["Close"].shift(2)
     data["Setup"] = 0
     count = 0
     for i in range(len(data)):
-        if i<4: continue
-        if data["Close"].iloc[i] > data["C4"].iloc[i]: count+=1
-        else: count=0
+        if i < 4:
+            continue
+        if data["Close"].iloc[i] > data["C4"].iloc[i]:
+            count += 1
+        else:
+            count = 0
         data.at[data.index[i], "Setup"] = count
     data["Countdown"] = 0
-    cd = 0; started=False
-    for i in range(len(data)):
-        if data["Setup"].iloc[i]==9:
-            started=True; cd=0
-        if started and i>=2:
-            if data["Close"].iloc[i] > data["C2"].iloc[i]: cd+=1
-            data.at[data.index[i], "Countdown"] = cd
-            if cd==13: started=False
     return data
 
 # App UI

@@ -30,11 +30,14 @@ def mfi(data, period=14):
     return mfi
 
 def demark(data):
+    data = data.copy()
     data["C4"] = data["Close"].shift(4)
     data["Setup"] = 0
     count = 0
     for i in range(4, len(data)):
-        if pd.notna(data["C4"].iloc[i]) and data["Close"].iloc[i] > data["C4"].iloc[i]:
+        close_val = data["Close"].iloc[i]
+        c4_val = data["C4"].iloc[i]
+        if pd.notna(c4_val) and pd.notna(close_val) and float(close_val) > float(c4_val):
             count += 1
         else:
             count = 0
@@ -84,4 +87,3 @@ if ticker:
 
     except Exception as e:
         st.error(f"⚠️ En feil oppstod: {e}")
-

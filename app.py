@@ -243,7 +243,7 @@ period = st.selectbox("Periode", ["3mo", "6mo", "1y", "2y"], index=1)
 if ticker:
     try:
         @st.cache_data(ttl=3600) # Cache data for 1 time (3600 sekunder)
-        def fetch_data(ticker_symbol, data_period, _version=13): # Øk _version hvis logikken i denne funksjonen endres
+        def fetch_data(ticker_symbol, data_period, _version=14): # Øk _version hvis logikken i denne funksjonen endres
             """
             Henter daglig aksjedata fra Yahoo Finance.
 

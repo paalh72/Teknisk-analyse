@@ -154,32 +154,24 @@ def clean_dataframe(df):
     """Clean DataFrame to prevent Arrow serialization errors"""
     df = df.copy()
     
-    # Debug: Print column info before cleaning
-    st.write("Debug - Column dtypes before cleaning:")
-    for col in df.columns:
-        st.write(f"{col}: {df[col].dtype}")
-    
     # Replace infinite values with NaN
     df = df.replace([np.inf, -np.inf], np.nan)
     
-    # Force conversion of all columns to proper types
+    # Force conversion of all columns to proper types - more aggressive approach
     for col in df.columns:
-        if df[col].dtype == 'object':
-            # Check if column contains mixed types
-            sample_values = df[col].dropna().head(10).tolist()
-            st.write(f"Debug - Sample values for {col}: {sample_values}")
+        try:
+            # First, try to convert to numeric
+            numeric_series = pd.to_numeric(df[col], errors='coerce')
             
-            # Try to convert to numeric
-            try:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-                if df[col].isna().all():
-                    # If all values become NaN, it's probably text
-                    df[col] = df[col].astype('string')
-                else:
-                    df[col] = df[col].astype('float64')
-            except:
-                # If conversion fails, force to string
-                df[col] = df[col].astype('string')
+            # If more than 50% of values are valid numbers, treat as numeric
+            if numeric_series.notna().sum() > len(df) * 0.5:
+                df[col] = numeric_series.astype('float64')
+            else:
+                # Convert to string if not numeric
+                df[col] = df[col].astype(str)
+        except:
+            # If all else fails, force to string
+            df[col] = df[col].astype(str)
     
     # Define expected column types and force them
     float_cols = ['Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close', 
@@ -196,16 +188,14 @@ def clean_dataframe(df):
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype('int64')
     
-    # Final check - ensure no object columns remain
+    # Final safety check - ensure no problematic dtypes
     for col in df.columns:
         if df[col].dtype == 'object':
-            st.warning(f"Column {col} still has object dtype, forcing to string")
-            df[col] = df[col].astype('string')
-    
-    # Debug: Print column info after cleaning
-    st.write("Debug - Column dtypes after cleaning:")
-    for col in df.columns:
-        st.write(f"{col}: {df[col].dtype}")
+            df[col] = df[col].astype(str)
+        elif 'Float64' in str(df[col].dtype):
+            df[col] = df[col].astype('float64')
+        elif 'Int64' in str(df[col].dtype):
+            df[col] = df[col].astype('int64')
     
     return df
 
@@ -219,8 +209,28 @@ if ticker:
         # Cache data fetching to avoid repeated API calls
         @st.cache_data
         def fetch_data(ticker, period):
-            data = yf.download(ticker, period=period, interval="1d", auto_adjust=False)
-            return data
+            try:
+                data = yf.download(ticker, period=period, interval="1d", auto_adjust=False)
+                # Immediate basic cleaning to avoid cache issues
+                data = data.reset_index()  # Make sure index is clean
+                
+                # Convert all columns to basic numpy dtypes immediately
+                for col in data.columns:
+                    if data[col].dtype == 'object':
+                        data[col] = pd.to_numeric(data[col], errors='coerce').astype('float64')
+                    elif 'float' in str(data[col].dtype):
+                        data[col] = data[col].astype('float64')
+                    elif 'int' in str(data[col].dtype):
+                        data[col] = data[col].astype('int64')
+                
+                # Set Date back as index if it exists
+                if 'Date' in data.columns:
+                    data = data.set_index('Date')
+                
+                return data
+            except Exception as e:
+                st.error(f"Error fetching data: {str(e)}")
+                return pd.DataFrame()
 
         raw_data = fetch_data(ticker, period)
         if raw_data.empty:
@@ -249,8 +259,21 @@ if ticker:
             data["MACD"], data["SIGNAL"] = macd(data)
             data["VolMA"] = data["Volume"].rolling(window=20, min_periods=1).mean().astype('float64')
 
-            # Final cleanup to ensure Arrow compatibility
+            # Final aggressive cleanup to ensure Arrow compatibility
             data = clean_dataframe(data)
+            
+            # Extra safety: convert any remaining nullable dtypes
+            for col in data.columns:
+                if hasattr(data[col].dtype, 'name'):
+                    if 'Float64' in str(data[col].dtype) or 'Int64' in str(data[col].dtype):
+                        data[col] = data[col].astype('float64')
+                    elif 'string' in str(data[col].dtype):
+                        data[col] = data[col].astype(str)
+            
+            # Final check: ensure no object dtypes remain
+            object_cols = data.select_dtypes(include=['object']).columns
+            for col in object_cols:
+                data[col] = data[col].astype(str)
 
             # Pris + DeMark
             fig = go.Figure()

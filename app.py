@@ -13,7 +13,7 @@ def rsi(data, period=14):
         if not isinstance(data['Close'], pd.Series):
             raise ValueError("Input 'Close' column must be a pandas Series")
         if not pd.api.types.is_numeric_dtype(data['Close']):
-            raise ValueError("Column 'Close' must be numeric for RSI calculation")
+            raise ValueError("Column 'Close' must be numeric")
         if data['Close'].isna().all():
             raise ValueError("Column 'Close' contains only NaN values")
         delta = data['Close'].diff()
@@ -28,7 +28,7 @@ def rsi(data, period=14):
         return result
     except Exception as e:
         st.error(f"Error in RSI calculation: {str(e)}")
-        return pd.Series(np.nan, index=data.index, dtype='float64')
+        return None
 
 # MA
 def ma(data, period=20):
@@ -36,7 +36,7 @@ def ma(data, period=20):
         if not isinstance(data['Close'], pd.Series):
             raise ValueError("Input 'Close' column must be a pandas Series")
         if not pd.api.types.is_numeric_dtype(data['Close']):
-            raise ValueError("Column 'Close' must be numeric for MA calculation")
+            raise ValueError("Column 'Close' must be numeric")
         if data['Close'].isna().all():
             raise ValueError("Column 'Close' contains only NaN values")
         result = data['Close'].rolling(window=period, min_periods=1).mean()
@@ -47,7 +47,7 @@ def ma(data, period=20):
         return result
     except Exception as e:
         st.error(f"Error in MA calculation: {str(e)}")
-        return pd.Series(np.nan, index=data.index, dtype='float64')
+        return None
 
 # MFI
 def mfi(data, period=14):
@@ -70,7 +70,7 @@ def mfi(data, period=14):
         return result
     except Exception as e:
         st.error(f"Error in MFI calculation: {str(e)}")
-        return pd.Series(np.nan, index=data.index, dtype='float64')
+        return None
 
 # MACD
 def macd(data, short=12, long=26, signal=9):
@@ -78,7 +78,7 @@ def macd(data, short=12, long=26, signal=9):
         if not isinstance(data['Close'], pd.Series):
             raise ValueError("Input 'Close' column must be a pandas Series")
         if not pd.api.types.is_numeric_dtype(data['Close']):
-            raise ValueError("Column 'Close' must be numeric for MACD calculation")
+            raise ValueError("Column 'Close' must be numeric")
         if data['Close'].isna().all():
             raise ValueError("Column 'Close' contains only NaN values")
         short_ema = data['Close'].ewm(span=short, adjust=False).mean()
@@ -94,7 +94,7 @@ def macd(data, short=12, long=26, signal=9):
         return macd_line, sig_line
     except Exception as e:
         st.error(f"Error in MACD calculation: {str(e)}")
-        return pd.Series(np.nan, index=data.index, dtype='float64'), pd.Series(np.nan, index=data.index, dtype='float64')
+        return None, None
 
 # DeMark 9-13
 def demark(data):
@@ -156,7 +156,7 @@ def demark(data):
         return data
     except Exception as e:
         st.error(f"Error in DeMark calculation: {str(e)}")
-        return data
+        return None
 
 # App UI
 st.title("📈 Teknisk analyse – Oslo Børs")
@@ -167,7 +167,7 @@ if ticker:
     try:
         # Cache data fetching
         @st.cache_data
-        def fetch_data(ticker, period, _version=8):
+        def fetch_data(ticker, period, _version=9):
             ts = TimeSeries(key=ALPHA_VANTAGE_API_KEY, output_format='pandas')
             outputsize = 'compact' if period == '3mo' else 'full'
             data, meta = ts.get_daily(symbol=ticker, outputsize=outputsize)
@@ -180,88 +180,99 @@ if ticker:
         if data.empty:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
-            # Minimal debug: Log column types only
-            debug_output = [f"Data columns: {list(data.columns)}", f"Data types:\n{data.dtypes.to_string()}"]
-
             # Validate input data
             numeric_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
             for col in numeric_columns:
                 data[col] = pd.to_numeric(data[col], errors='coerce')
                 if data[col].isna().all():
-                    debug_output.append(f"Warning: Column '{col}' contains only non-numeric or missing values")
+                    st.error(f"Column '{col}' contains only non-numeric or missing values")
                     raise ValueError(f"Column '{col}' contains only non-numeric or missing values")
-                non_numeric = data[col][~data[col].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))]
-                if not non_numeric.empty:
-                    debug_output.append(f"Warning: Column {col} contains non-numeric values: {non_numeric.head().to_list()}")
 
-            # Calculate technical indicators
-            data = demark(data)
-            data["RSI"] = rsi(data)
-            data["MA20"] = ma(data)
-            data["MFI"] = mfi(data)
-            data["MACD"], data["SIGNAL"] = macd(data)
-            data["VolMA"] = data["Volume"].rolling(window=20, min_periods=1).mean()
+            # Minimal DataFrame for plotting
+            plot_data = pd.DataFrame(index=data.index)
+            plot_data['Close'] = data['Close']
+            plot_data['Volume'] = data['Volume']
 
-            # Minimal debug for calculated columns
-            calc_cols = ['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']
-            debug_output.append(f"Calculated columns dtypes:\n{data[calc_cols].dtypes.to_string()}")
-            for col in calc_cols:
-                if data[col].dtype != 'float64':
-                    debug_output.append(f"Warning: Column {col} has non-float64 dtype: {data[col].dtype}")
-                if data[col].isna().all():
-                    debug_output.append(f"Warning: Column {col} contains only NaN values")
+            # Calculate indicators one at a time
+            demark_data = demark(data)
+            if demark_data is not None:
+                plot_data['Setup'] = demark_data['Setup']
+                plot_data['Countdown'] = demark_data['Countdown']
+            else:
+                plot_data['Setup'] = 0
+                plot_data['Countdown'] = 0
 
-            # Display debug output
-            st.text("\n".join(debug_output))
+            rsi_result = rsi(data)
+            if rsi_result is not None:
+                plot_data['RSI'] = rsi_result
+
+            ma_result = ma(data)
+            if ma_result is not None:
+                plot_data['MA20'] = ma_result
+
+            mfi_result = mfi(data)
+            if mfi_result is not None:
+                plot_data['MFI'] = mfi_result
+
+            macd_result, signal_result = macd(data)
+            if macd_result is not None and signal_result is not None:
+                plot_data['MACD'] = macd_result
+                plot_data['SIGNAL'] = signal_result
+
+            plot_data['VolMA'] = data["Volume"].rolling(window=20, min_periods=1).mean()
 
             # Pris + DeMark
             fig = go.Figure()
-            fig.add_trace(go.Scatter(x=data.index, y=data["Close"], name="Close"))
-            fig.add_trace(go.Scatter(x=data.index, y=data["MA20"], name="MA20", line=dict(dash="dot")))
-            for i in data.index:
-                if data.at[i, "Setup"] == 9:
-                    fig.add_trace(go.Scatter(x=[i], y=[data.at[i, "Close"]], text=["9"], mode="markers+text", marker=dict(color="green", size=10)))
-                if data.at[i, "Countdown"] == 13:
-                    fig.add_trace(go.Scatter(x=[i], y=[data.at[i, "Close"]], text=["13"], mode="markers+text", marker=dict(color="red", size=10)))
+            fig.add_trace(go.Scatter(x=plot_data.index, y=plot_data["Close"], name="Close"))
+            if 'MA20' in plot_data:
+                fig.add_trace(go.Scatter(x=plot_data.index, y=plot_data["MA20"], name="MA20", line=dict(dash="dot")))
+            for i in plot_data.index:
+                if plot_data.at[i, "Setup"] == 9:
+                    fig.add_trace(go.Scatter(x=[i], y=[plot_data.at[i, "Close"]], text=["9"], mode="markers+text", marker=dict(color="green", size=10)))
+                if plot_data.at[i, "Countdown"] == 13:
+                    fig.add_trace(go.Scatter(x=[i], y=[plot_data.at[i, "Close"]], text=["13"], mode="markers+text", marker=dict(color="red", size=10)))
             st.plotly_chart(fig, use_container_width=True)
 
             # RSI
-            st.subheader("RSI")
-            rsi_data = data["RSI"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
-            if rsi_data.isna().all():
-                st.warning("RSI data contains only NaN values")
-            else:
-                rsi_fig = go.Figure()
-                rsi_fig.add_trace(go.Scatter(x=data.index, y=rsi_data, name="RSI"))
-                st.plotly_chart(rsi_fig, use_container_width=True)
+            if 'RSI' in plot_data:
+                st.subheader("RSI")
+                rsi_data = plot_data["RSI"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
+                if not rsi_data.isna().all():
+                    rsi_fig = go.Figure()
+                    rsi_fig.add_trace(go.Scatter(x=plot_data.index, y=rsi_data, name="RSI"))
+                    st.plotly_chart(rsi_fig, use_container_width=True)
+                else:
+                    st.warning("RSI data contains only NaN values")
 
             # MACD
-            st.subheader("MACD")
-            macd_fig = go.Figure()
-            macd_data = data["MACD"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
-            signal_data = data["SIGNAL"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
-            if macd_data.isna().all() or signal_data.isna().all():
-                st.warning("MACD or Signal data contains only NaN values")
-            else:
-                macd_fig.add_trace(go.Scatter(x=data.index, y=macd_data, name="MACD"))
-                macd_fig.add_trace(go.Scatter(x=data.index, y=signal_data, name="Signal", line=dict(dash="dot")))
-                st.plotly_chart(macd_fig, use_container_width=True)
+            if 'MACD' in plot_data and 'SIGNAL' in plot_data:
+                st.subheader("MACD")
+                macd_fig = go.Figure()
+                macd_data = plot_data["MACD"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
+                signal_data = plot_data["SIGNAL"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
+                if not (macd_data.isna().all() or signal_data.isna().all()):
+                    macd_fig.add_trace(go.Scatter(x=plot_data.index, y=macd_data, name="MACD"))
+                    macd_fig.add_trace(go.Scatter(x=plot_data.index, y=signal_data, name="Signal", line=dict(dash="dot")))
+                    st.plotly_chart(macd_fig, use_container_width=True)
+                else:
+                    st.warning("MACD or Signal data contains only NaN values")
 
             # MFI
-            st.subheader("MFI")
-            mfi_data = data["MFI"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
-            if mfi_data.isna().all():
-                st.warning("MFI data contains only NaN values")
-            else:
-                mfi_fig = go.Figure()
-                mfi_fig.add_trace(go.Scatter(x=data.index, y=mfi_data, name="MFI"))
-                st.plotly_chart(mfi_fig, use_container_width=True)
+            if 'MFI' in plot_data:
+                st.subheader("MFI")
+                mfi_data = plot_data["MFI"].astype('float64').replace([np.inf, -np.inf], np.nan).reset_index(drop=True)
+                if not mfi_data.isna().all():
+                    mfi_fig = go.Figure()
+                    mfi_fig.add_trace(go.Scatter(x=plot_data.index, y=mfi_data, name="MFI"))
+                    st.plotly_chart(mfi_fig, use_container_width=True)
+                else:
+                    st.warning("MFI data contains only NaN values")
 
             # Volume
             st.subheader("Volum og snitt")
             vfig = go.Figure()
-            vfig.add_trace(go.Bar(x=data.index, y=data["Volume"], name="Volume"))
-            vfig.add_trace(go.Scatter(x=data.index, y=data["VolMA"], name="VolMA"))
+            vfig.add_trace(go.Bar(x=plot_data.index, y=plot_data["Volume"], name="Volume"))
+            vfig.add_trace(go.Scatter(x=plot_data.index, y=plot_data["VolMA"], name="VolMA"))
             st.plotly_chart(vfig, use_container_width=True)
     except Exception as e:
         st.error(f"En feil oppstod: {str(e)}")

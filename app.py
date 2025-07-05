@@ -17,18 +17,12 @@ def rsi(data, period=14):
         if data['Close'].isna().all():
             raise ValueError("Column 'Close' contains only NaN values")
         delta = data['Close'].diff()
-        if not isinstance(delta, pd.Series):
-            raise ValueError("Delta from diff() is not a pandas Series")
         gain = delta.where(delta > 0, 0).rolling(window=period, min_periods=1).mean()
         loss = -delta.where(delta < 0, 0).rolling(window=period, min_periods=1).mean()
         rs = gain / loss.where(loss != 0, np.finfo(float).eps)
         result = 100 - (100 / (1 + rs))
         result = pd.to_numeric(result, errors='coerce').astype('float64')
         result = result.replace([np.inf, -np.inf], np.nan)
-        if not isinstance(result, pd.Series):
-            raise ValueError("RSI result is not a pandas Series")
-        if result.dtype != 'float64':
-            raise ValueError(f"RSI contains non-float64 values: {result.dtype}")
         if result.isna().all():
             raise ValueError("RSI contains only NaN values")
         return result
@@ -48,10 +42,6 @@ def ma(data, period=20):
         result = data['Close'].rolling(window=period, min_periods=1).mean()
         result = pd.to_numeric(result, errors='coerce').astype('float64')
         result = result.replace([np.inf, -np.inf], np.nan)
-        if not isinstance(result, pd.Series):
-            raise ValueError("MA result is not a pandas Series")
-        if result.dtype != 'float64':
-            raise ValueError(f"MA contains non-float64 values: {result.dtype}")
         if result.isna().all():
             raise ValueError("MA contains only NaN values")
         return result
@@ -69,18 +59,12 @@ def mfi(data, period=14):
         if data[['High', 'Low', 'Close', 'Volume']].isna().all().all():
             raise ValueError("Columns 'High', 'Low', 'Close', 'Volume' contain only NaN values")
         tp = (data['High'] + data['Low'] + data['Close']) / 3
-        if not isinstance(tp, pd.Series):
-            raise ValueError("Typical price (tp) is not a pandas Series")
         mf = tp * data['Volume']
         pos = mf.where(tp > tp.shift(), 0).rolling(window=period, min_periods=1).sum()
         neg = mf.where(tp < tp.shift(), 0).rolling(window=period, min_periods=1).sum()
         result = 100 - (100 / (1 + pos / neg.where(neg != 0, np.finfo(float).eps)))
         result = pd.to_numeric(result, errors='coerce').astype('float64')
         result = result.replace([np.inf, -np.inf], np.nan)
-        if not isinstance(result, pd.Series):
-            raise ValueError("MFI result is not a pandas Series")
-        if result.dtype != 'float64':
-            raise ValueError(f"MFI contains non-float64 values: {result.dtype}")
         if result.isna().all():
             raise ValueError("MFI contains only NaN values")
         return result
@@ -105,10 +89,6 @@ def macd(data, short=12, long=26, signal=9):
         sig_line = pd.to_numeric(sig_line, errors='coerce').astype('float64')
         macd_line = macd_line.replace([np.inf, -np.inf], np.nan)
         sig_line = sig_line.replace([np.inf, -np.inf], np.nan)
-        if not (isinstance(macd_line, pd.Series) and isinstance(sig_line, pd.Series)):
-            raise ValueError("MACD or Signal line is not a pandas Series")
-        if macd_line.dtype != 'float64' or sig_line.dtype != 'float64':
-            raise ValueError(f"MACD or Signal contains non-float64 values: MACD {macd_line.dtype}, Signal {sig_line.dtype}")
         if macd_line.isna().all() or sig_line.isna().all():
             raise ValueError("MACD or Signal contains only NaN values")
         return macd_line, sig_line
@@ -187,24 +167,21 @@ if ticker:
     try:
         # Cache data fetching
         @st.cache_data
-        def fetch_data(ticker, period, _version=7):
+        def fetch_data(ticker, period, _version=8):
             ts = TimeSeries(key=ALPHA_VANTAGE_API_KEY, output_format='pandas')
             outputsize = 'compact' if period == '3mo' else 'full'
             data, meta = ts.get_daily(symbol=ticker, outputsize=outputsize)
             data = data.rename(columns={'1. open': 'Open', '2. high': 'High', '3. low': 'Low', '4. close': 'Close', '5. volume': 'Volume'})
             data.index = pd.to_datetime(data.index)
-            data = data.sort_index()  # Ensure chronological order
+            data = data.sort_index()
             return data
 
         data = fetch_data(ticker, period)
         if data.empty:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
-            # Debug: Inspect raw data
-            debug_output = []
-            debug_output.append(f"Data columns: {list(data.columns)}")
-            debug_output.append(f"Data types:\n{data.dtypes.to_string()}")
-            debug_output.append(f"First few rows:\n{data[['Open', 'High', 'Low', 'Close', 'Volume']].head().to_string()}")
+            # Minimal debug: Log column types only
+            debug_output = [f"Data columns: {list(data.columns)}", f"Data types:\n{data.dtypes.to_string()}"]
 
             # Validate input data
             numeric_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
@@ -212,10 +189,10 @@ if ticker:
                 data[col] = pd.to_numeric(data[col], errors='coerce')
                 if data[col].isna().all():
                     debug_output.append(f"Warning: Column '{col}' contains only non-numeric or missing values")
-                else:
-                    non_numeric = data[col][~data[col].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))]
-                    if not non_numeric.empty:
-                        debug_output.append(f"Warning: Column {col} contains non-numeric values: {non_numeric.head().to_list()}")
+                    raise ValueError(f"Column '{col}' contains only non-numeric or missing values")
+                non_numeric = data[col][~data[col].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))]
+                if not non_numeric.empty:
+                    debug_output.append(f"Warning: Column {col} contains non-numeric values: {non_numeric.head().to_list()}")
 
             # Calculate technical indicators
             data = demark(data)
@@ -225,19 +202,14 @@ if ticker:
             data["MACD"], data["SIGNAL"] = macd(data)
             data["VolMA"] = data["Volume"].rolling(window=20, min_periods=1).mean()
 
-            # Debug: Inspect calculated columns
+            # Minimal debug for calculated columns
             calc_cols = ['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']
             debug_output.append(f"Calculated columns dtypes:\n{data[calc_cols].dtypes.to_string()}")
-            debug_output.append(f"First few rows of calculated columns:\n{data[calc_cols].head().to_string()}")
             for col in calc_cols:
                 if data[col].dtype != 'float64':
                     debug_output.append(f"Warning: Column {col} has non-float64 dtype: {data[col].dtype}")
                 if data[col].isna().all():
                     debug_output.append(f"Warning: Column {col} contains only NaN values")
-                else:
-                    non_numeric = data[col][~data[col].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))]
-                    if not non_numeric.empty:
-                        debug_output.append(f"Warning: Column {col} contains non-numeric values: {non_numeric.head().to_list()}")
 
             # Display debug output
             st.text("\n".join(debug_output))

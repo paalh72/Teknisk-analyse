@@ -26,6 +26,8 @@ def rsi(data, period=14):
             raise ValueError("RSI result is not a pandas Series")
         if result.dtype != 'float64':
             raise ValueError(f"RSI contains non-float64 values: {result.dtype}")
+        if result.isna().all():
+            raise ValueError("RSI contains only NaN values")
         return result
     except Exception as e:
         st.error(f"Error in RSI calculation: {str(e)}")
@@ -45,6 +47,8 @@ def ma(data, period=20):
             raise ValueError("MA result is not a pandas Series")
         if result.dtype != 'float64':
             raise ValueError(f"MA contains non-float64 values: {result.dtype}")
+        if result.isna().all():
+            raise ValueError("MA contains only NaN values")
         return result
     except Exception as e:
         st.error(f"Error in MA calculation: {str(e)}")
@@ -71,6 +75,8 @@ def mfi(data, period=14):
             raise ValueError("MFI result is not a pandas Series")
         if result.dtype != 'float64':
             raise ValueError(f"MFI contains non-float64 values: {result.dtype}")
+        if result.isna().all():
+            raise ValueError("MFI contains only NaN values")
         return result
     except Exception as e:
         st.error(f"Error in MFI calculation: {str(e)}")
@@ -95,6 +101,8 @@ def macd(data, short=12, long=26, signal=9):
             raise ValueError("MACD or Signal line is not a pandas Series")
         if macd_line.dtype != 'float64' or sig_line.dtype != 'float64':
             raise ValueError(f"MACD or Signal contains non-float64 values: MACD {macd_line.dtype}, Signal {sig_line.dtype}")
+        if macd_line.isna().all() or sig_line.isna().all():
+            raise ValueError("MACD or Signal contains only NaN values")
         return macd_line, sig_line
     except Exception as e:
         st.error(f"Error in MACD calculation: {str(e)}")
@@ -176,7 +184,7 @@ if ticker:
     try:
         # Cache data fetching to avoid repeated API calls
         @st.cache_data
-        def fetch_data(ticker, period, _version=4):
+        def fetch_data(ticker, period, _version=5):
             return yf.download(ticker, period=period, interval="1d", auto_adjust=False)
 
         data = fetch_data(ticker, period)
@@ -184,9 +192,10 @@ if ticker:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
             # Debug: Inspect raw data
-            st.text(f"Data columns: {list(data.columns)}")
-            st.text(f"Data types:\n{data.dtypes.to_string()}")
-            st.text(f"First few rows:\n{data.head().to_string()}")
+            debug_output = []
+            debug_output.append(f"Data columns: {list(data.columns)}")
+            debug_output.append(f"Data types:\n{data.dtypes.to_string()}")
+            debug_output.append(f"First few rows:\n{data.head().to_string()}")
 
             # Ensure numeric columns
             numeric_columns = ['Close', 'High', 'Low', 'Volume']
@@ -209,18 +218,21 @@ if ticker:
 
             # Debug: Inspect calculated columns
             calc_cols = ['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']
-            st.text(f"Calculated columns dtypes:\n{data[calc_cols].dtypes.to_string()}")
-            st.text(f"First few rows of calculated columns:\n{data[calc_cols].head().to_string()}")
+            debug_output.append(f"Calculated columns dtypes:\n{data[calc_cols].dtypes.to_string()}")
+            debug_output.append(f"First few rows of calculated columns:\n{data[calc_cols].head().to_string()}")
             # Check for non-numeric values
             for col in calc_cols:
                 if data[col].dtype != 'float64':
-                    st.warning(f"Column {col} has non-float64 dtype: {data[col].dtype}")
+                    debug_output.append(f"Warning: Column {col} has non-float64 dtype: {data[col].dtype}")
                 if data[col].isna().all():
-                    st.warning(f"Column {col} contains only NaN values")
+                    debug_output.append(f"Warning: Column {col} contains only NaN values")
                 else:
                     non_numeric = data[col][~data[col].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))]
                     if not non_numeric.empty:
-                        st.warning(f"Column {col} contains non-numeric values: {non_numeric.head().to_list()}")
+                        debug_output.append(f"Warning: Column {col} contains non-numeric values: {non_numeric.head().to_list()}")
+
+            # Display debug output
+            st.text("\n".join(debug_output))
 
             # Pris + DeMark
             fig = go.Figure()

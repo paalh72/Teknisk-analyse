@@ -11,15 +11,15 @@ def rsi(data, period=14):
             raise ValueError("Input 'Close' column must be a pandas Series")
         if not pd.api.types.is_numeric_dtype(data['Close']):
             raise ValueError("Column 'Close' must be numeric for RSI calculation")
+        if data['Close'].isna().all():
+            raise ValueError("Column 'Close' contains only NaN values")
         delta = data['Close'].diff()
         if not isinstance(delta, pd.Series):
             raise ValueError("Delta from diff() is not a pandas Series")
         gain = delta.where(delta > 0, 0).rolling(window=period, min_periods=1).mean()
         loss = -delta.where(delta < 0, 0).rolling(window=period, min_periods=1).mean()
-        # Avoid division by zero
         rs = gain / loss.where(loss != 0, np.finfo(float).eps)
         result = 100 - (100 / (1 + rs))
-        # Ensure numeric and handle inf/NaN
         result = pd.to_numeric(result, errors='coerce').astype('float64')
         result = result.replace([np.inf, -np.inf], np.nan)
         if not isinstance(result, pd.Series):
@@ -40,6 +40,8 @@ def ma(data, period=20):
             raise ValueError("Input 'Close' column must be a pandas Series")
         if not pd.api.types.is_numeric_dtype(data['Close']):
             raise ValueError("Column 'Close' must be numeric for MA calculation")
+        if data['Close'].isna().all():
+            raise ValueError("Column 'Close' contains only NaN values")
         result = data['Close'].rolling(window=period, min_periods=1).mean()
         result = pd.to_numeric(result, errors='coerce').astype('float64')
         result = result.replace([np.inf, -np.inf], np.nan)
@@ -60,14 +62,15 @@ def mfi(data, period=14):
         if not all(isinstance(data[col], pd.Series) for col in ['High', 'Low', 'Close', 'Volume']):
             raise ValueError("Input columns 'High', 'Low', 'Close', 'Volume' must be pandas Series")
         if not all(pd.api.types.is_numeric_dtype(data[col]) for col in ['High', 'Low', 'Close', 'Volume']):
-            raise ValueError("Columns 'High', 'Low', 'Close', 'Volume' must be numeric for MFI calculation")
+            raise ValueError("Columns 'High', 'Low', 'Close', 'Volume' must be numeric")
+        if data[['High', 'Low', 'Close', 'Volume']].isna().all().all():
+            raise ValueError("Columns 'High', 'Low', 'Close', 'Volume' contain only NaN values")
         tp = (data['High'] + data['Low'] + data['Close']) / 3
         if not isinstance(tp, pd.Series):
             raise ValueError("Typical price (tp) is not a pandas Series")
         mf = tp * data['Volume']
         pos = mf.where(tp > tp.shift(), 0).rolling(window=period, min_periods=1).sum()
         neg = mf.where(tp < tp.shift(), 0).rolling(window=period, min_periods=1).sum()
-        # Avoid division by zero
         result = 100 - (100 / (1 + pos / neg.where(neg != 0, np.finfo(float).eps)))
         result = pd.to_numeric(result, errors='coerce').astype('float64')
         result = result.replace([np.inf, -np.inf], np.nan)
@@ -89,6 +92,8 @@ def macd(data, short=12, long=26, signal=9):
             raise ValueError("Input 'Close' column must be a pandas Series")
         if not pd.api.types.is_numeric_dtype(data['Close']):
             raise ValueError("Column 'Close' must be numeric for MACD calculation")
+        if data['Close'].isna().all():
+            raise ValueError("Column 'Close' contains only NaN values")
         short_ema = data['Close'].ewm(span=short, adjust=False).mean()
         long_ema = data['Close'].ewm(span=long, adjust=False).mean()
         macd_line = short_ema - long_ema
@@ -111,26 +116,22 @@ def macd(data, short=12, long=26, signal=9):
 # DeMark 9-13
 def demark(data):
     try:
-        # Ensure required columns exist
         required_columns = ['Close', 'High', 'Low', 'Volume']
         if not all(col in data.columns for col in required_columns):
             raise ValueError(f"DataFrame missing required columns: {', '.join(set(required_columns) - set(data.columns))}")
-        
-        # Ensure columns are numeric
         for col in required_columns:
             if not pd.api.types.is_numeric_dtype(data[col]):
                 raise ValueError(f"Column '{col}' must be numeric")
-        
-        # Initialize columns
-        data = data.copy()  # Avoid modifying the original DataFrame
+            if data[col].isna().all():
+                raise ValueError(f"Column '{col}' contains only NaN values")
+        data = data.copy()
         data["C4"] = data["Close"].shift(4)
         data["C2"] = data["Close"].shift(2)
         data["Setup"] = 0
         data["Countdown"] = 0
-        
         count = 0
         for i in range(len(data)):
-            if i < 4:  # Skip rows where C4 is NaN
+            if i < 4:
                 continue
             try:
                 close_val = data["Close"].iloc[i]
@@ -147,7 +148,6 @@ def demark(data):
             except Exception as e:
                 st.warning(f"Error processing Setup at index {i}: {str(e)}")
                 count = 0
-        
         cd = 0
         started = False
         for i in range(len(data)):
@@ -182,9 +182,9 @@ period = st.selectbox("Periode", ["3mo", "6mo", "1y", "2y"], index=1)
 
 if ticker:
     try:
-        # Cache data fetching to avoid repeated API calls
+        # Cache data fetching
         @st.cache_data
-        def fetch_data(ticker, period, _version=5):
+        def fetch_data(ticker, period, _version=6):
             return yf.download(ticker, period=period, interval="1d", auto_adjust=False)
 
         data = fetch_data(ticker, period)
@@ -197,17 +197,16 @@ if ticker:
             debug_output.append(f"Data types:\n{data.dtypes.to_string()}")
             debug_output.append(f"First few rows:\n{data.head().to_string()}")
 
-            # Ensure numeric columns
+            # Validate input data
             numeric_columns = ['Close', 'High', 'Low', 'Volume']
             for col in numeric_columns:
                 data[col] = pd.to_numeric(data[col], errors='coerce')
                 if data[col].isna().all():
                     raise ValueError(f"Column '{col}' contains only non-numeric or missing values after conversion")
-            
-            # Check if Close is numeric
-            if not pd.api.types.is_numeric_dtype(data['Close']):
-                raise ValueError("Column 'Close' must be numeric after conversion")
-            
+                non_numeric = data[col][~data[col].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))]
+                if not non_numeric.empty:
+                    debug_output.append(f"Warning: Column {col} contains non-numeric values: {non_numeric.head().to_list()}")
+
             # Calculate technical indicators
             data = demark(data)
             data["RSI"] = rsi(data)
@@ -220,7 +219,6 @@ if ticker:
             calc_cols = ['RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL']
             debug_output.append(f"Calculated columns dtypes:\n{data[calc_cols].dtypes.to_string()}")
             debug_output.append(f"First few rows of calculated columns:\n{data[calc_cols].head().to_string()}")
-            # Check for non-numeric values
             for col in calc_cols:
                 if data[col].dtype != 'float64':
                     debug_output.append(f"Warning: Column {col} has non-float64 dtype: {data[col].dtype}")

@@ -95,169 +95,130 @@ def demark(data):
             if not pd.api.types.is_numeric_dtype(data[col]):
                 raise ValueError(f"Column '{col}' must be numeric")
         
-        # Initialize columns with proper dtypes
-        data = data.copy()
-        # CRITICAL FIX: Ensure shifted columns are float64, not object
-        data["C4"] = data["Close"].shift(4).astype('float64')
-        data["C2"] = data["Close"].shift(2).astype('float64')
-        data["Setup"] = pd.Series(0, index=data.index, dtype='int64')
-        data["Countdown"] = pd.Series(0, index=data.index, dtype='int64')
+        # Create a copy to avoid modifying original
+        result_data = data.copy()
         
+        # Initialize with explicit numpy arrays, then convert to Series
+        result_data["C4"] = pd.Series(data["Close"].shift(4).values, index=data.index, dtype='float64')
+        result_data["C2"] = pd.Series(data["Close"].shift(2).values, index=data.index, dtype='float64')
+        result_data["Setup"] = pd.Series(np.zeros(len(data), dtype='int64'), index=data.index, dtype='int64')
+        result_data["Countdown"] = pd.Series(np.zeros(len(data), dtype='int64'), index=data.index, dtype='int64')
+        
+        # Convert to numpy arrays for faster processing
+        close_vals = result_data["Close"].values
+        c4_vals = result_data["C4"].values
+        c2_vals = result_data["C2"].values
+        setup_vals = np.zeros(len(data), dtype='int64')
+        countdown_vals = np.zeros(len(data), dtype='int64')
+        
+        # Setup calculation
         count = 0
         for i in range(len(data)):
             if i < 4:  # Skip rows where C4 is NaN
                 continue
-            try:
-                close_val = data["Close"].iloc[i]
-                c4_val = data["C4"].iloc[i]
-                if pd.isna(close_val) or pd.isna(c4_val):
-                    count = 0
-                elif close_val > c4_val:
+            if not (np.isnan(close_vals[i]) or np.isnan(c4_vals[i])):
+                if close_vals[i] > c4_vals[i]:
                     count += 1
                 else:
                     count = 0
-                data.iloc[i, data.columns.get_loc("Setup")] = count
-            except Exception as e:
-                st.warning(f"Error processing Setup at index {i}: {str(e)}")
-                count = 0
+                setup_vals[i] = count
         
+        # Countdown calculation
         cd = 0
         started = False
         for i in range(len(data)):
-            if data["Setup"].iloc[i] == 9:
+            if setup_vals[i] == 9:
                 started = True
                 cd = 0
             if started and i >= 2:
-                try:
-                    close_val = data["Close"].iloc[i]
-                    c2_val = data["C2"].iloc[i]
-                    if pd.isna(close_val) or pd.isna(c2_val):
-                        cd = 0
-                    elif close_val > c2_val:
+                if not (np.isnan(close_vals[i]) or np.isnan(c2_vals[i])):
+                    if close_vals[i] > c2_vals[i]:
                         cd += 1
-                    data.iloc[i, data.columns.get_loc("Countdown")] = cd
+                    countdown_vals[i] = cd
                     if cd == 13:
                         started = False
-                except Exception as e:
-                    st.warning(f"Error processing Countdown at index {i}: {str(e)}")
-                    cd = 0
         
-        # Ensure all columns maintain proper dtypes
-        data["Setup"] = data["Setup"].astype('int64')
-        data["Countdown"] = data["Countdown"].astype('int64')
-        data["C4"] = data["C4"].astype('float64')
-        data["C2"] = data["C2"].astype('float64')
+        # Assign back to DataFrame
+        result_data["Setup"] = pd.Series(setup_vals, index=data.index, dtype='int64')
+        result_data["Countdown"] = pd.Series(countdown_vals, index=data.index, dtype='int64')
         
-        return data
+        return result_data
     except Exception as e:
         st.error(f"Error in DeMark calculation: {str(e)}")
         return data
 
-def clean_dataframe_for_arrow(df):
+def bulletproof_arrow_clean(df):
     """
-    Ultra-aggressive DataFrame cleaning specifically for Arrow/Streamlit compatibility
+    Bulletproof DataFrame cleaning for Arrow compatibility
     """
-    df = df.copy()
+    # Start with a completely fresh DataFrame
+    cleaned_df = pd.DataFrame()
     
-    # Step 1: Replace all infinite values with NaN
-    df = df.replace([np.inf, -np.inf], np.nan)
-    
-    # Step 2: Force reset index to ensure no index issues
+    # Handle index - convert to RangeIndex if needed
     if not isinstance(df.index, pd.RangeIndex):
-        df = df.reset_index()
+        if hasattr(df.index, 'to_pydatetime'):
+            # If datetime index, add as column
+            cleaned_df['Date'] = df.index.to_pydatetime()
+        else:
+            # Add index as column
+            cleaned_df['Index'] = df.index
+        df = df.reset_index(drop=True)
     
-    # Step 3: Brutally force each column to proper types
+    # Process each column individually
     for col in df.columns:
         try:
-            # Skip datetime columns
-            if pd.api.types.is_datetime64_any_dtype(df[col]):
+            series = df[col]
+            
+            # Handle datetime columns
+            if pd.api.types.is_datetime64_any_dtype(series):
+                cleaned_df[col] = pd.to_datetime(series, errors='coerce')
                 continue
             
-            # For any column that might be numeric, force conversion
-            try:
-                # First, convert to string to eliminate any dtype issues
-                temp_series = df[col].astype(str)
-                # Then convert to numeric
-                numeric_series = pd.to_numeric(temp_series, errors='coerce')
+            # Try to convert to numeric
+            if series.dtype == 'object' or 'Float' in str(series.dtype) or 'Int' in str(series.dtype):
+                # First convert to string to eliminate dtype issues
+                str_series = series.astype(str)
+                # Then to numeric
+                numeric_series = pd.to_numeric(str_series, errors='coerce')
                 
-                # If we get mostly valid numbers, use them
-                if numeric_series.notna().sum() > len(df) * 0.7:
-                    df[col] = numeric_series.astype('float64')
+                # If mostly numeric, use float64
+                if numeric_series.notna().sum() > len(df) * 0.1:
+                    cleaned_df[col] = numeric_series.astype('float64')
                 else:
-                    # Force to string if not numeric
-                    df[col] = temp_series.astype(str)
-            except:
-                # If all else fails, force to string
-                df[col] = df[col].astype(str)
-                
+                    # Otherwise keep as string
+                    cleaned_df[col] = str_series.astype(str)
+            else:
+                # For already numeric columns, ensure proper type
+                if pd.api.types.is_numeric_dtype(series):
+                    if pd.api.types.is_integer_dtype(series):
+                        cleaned_df[col] = series.astype('int64')
+                    else:
+                        cleaned_df[col] = series.astype('float64')
+                else:
+                    cleaned_df[col] = series.astype(str)
+                    
         except Exception as e:
             # Emergency fallback - convert to string
-            df[col] = df[col].astype(str)
+            cleaned_df[col] = df[col].astype(str)
     
-    # Step 4: Specific column type enforcement for known numeric columns
-    float_cols = ['Open', 'High', 'Low', 'Close', 'Volume', 'Adj Close', 
-                  'C4', 'C2', 'RSI', 'MA20', 'MFI', 'MACD', 'SIGNAL', 'VolMA']
-    int_cols = ['Setup', 'Countdown']
+    # Handle infinite values
+    numeric_cols = cleaned_df.select_dtypes(include=[np.number]).columns
+    for col in numeric_cols:
+        cleaned_df[col] = cleaned_df[col].replace([np.inf, -np.inf], np.nan)
     
-    # Enforce float columns
+    # Fill NaN values
+    for col in cleaned_df.columns:
+        if pd.api.types.is_numeric_dtype(cleaned_df[col]):
+            cleaned_df[col] = cleaned_df[col].fillna(0)
+        else:
+            cleaned_df[col] = cleaned_df[col].fillna('')
+    
+    # Round numeric columns to avoid precision issues
+    float_cols = cleaned_df.select_dtypes(include=['float64']).columns
     for col in float_cols:
-        if col in df.columns:
-            try:
-                df[col] = pd.to_numeric(df[col].astype(str), errors='coerce').astype('float64')
-            except:
-                df[col] = pd.Series(0.0, index=df.index, dtype='float64')
+        cleaned_df[col] = cleaned_df[col].round(8)
     
-    # Enforce integer columns
-    for col in int_cols:
-        if col in df.columns:
-            try:
-                df[col] = pd.to_numeric(df[col].astype(str), errors='coerce').fillna(0).astype('int64')
-            except:
-                df[col] = pd.Series(0, index=df.index, dtype='int64')
-    
-    # Step 5: Final ultra-aggressive cleanup
-    for col in df.columns:
-        dtype_str = str(df[col].dtype)
-        
-        # Handle any remaining problematic dtypes
-        if dtype_str == 'object':
-            try:
-                # Last attempt to convert to numeric
-                numeric_attempt = pd.to_numeric(df[col], errors='coerce')
-                if numeric_attempt.notna().sum() > 0:
-                    df[col] = numeric_attempt.astype('float64')
-                else:
-                    df[col] = df[col].astype(str)
-            except:
-                df[col] = df[col].astype(str)
-        
-        elif 'Float' in dtype_str or 'Int' in dtype_str or 'complex' in dtype_str:
-            # Convert any pandas extension dtypes or complex types
-            try:
-                df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
-            except:
-                df[col] = pd.Series(0.0, index=df.index, dtype='float64')
-    
-    # Step 6: Handle NaN values more aggressively
-    # Replace NaN in numeric columns with 0
-    numeric_cols = df.select_dtypes(include=[np.number]).columns
-    df[numeric_cols] = df[numeric_cols].fillna(0)
-    
-    # Replace NaN in string columns with empty string
-    string_cols = df.select_dtypes(include=['object']).columns
-    df[string_cols] = df[string_cols].fillna('')
-    
-    # Step 7: Round floating point numbers to avoid precision issues
-    float_columns = df.select_dtypes(include=['float64']).columns
-    df[float_columns] = df[float_columns].round(8)
-    
-    # Step 8: Final validation - ensure no problematic types remain
-    for col in df.columns:
-        if df[col].dtype not in ['float64', 'int64', 'object', 'datetime64[ns]', 'bool']:
-            # Force to float64 as last resort
-            df[col] = pd.to_numeric(df[col], errors='coerce').astype('float64')
-    
-    return df
+    return cleaned_df
 
 # App UI
 st.title("📈 Teknisk analyse – Oslo Børs")
@@ -276,23 +237,13 @@ if ticker:
                 if data.empty:
                     return pd.DataFrame()
                 
-                # Reset index to make Date a column
-                data = data.reset_index()
+                # Clean data immediately after download
+                data = data.dropna(how='all')  # Remove completely empty rows
                 
-                # Ensure all columns are properly typed from the start
+                # Ensure proper column types
                 for col in data.columns:
-                    if col == 'Date':
-                        continue  # Keep Date as datetime
-                    elif data[col].dtype == 'object':
+                    if pd.api.types.is_numeric_dtype(data[col]):
                         data[col] = pd.to_numeric(data[col], errors='coerce').astype('float64')
-                    elif 'float' in str(data[col].dtype):
-                        data[col] = data[col].astype('float64')
-                    elif 'int' in str(data[col].dtype):
-                        data[col] = data[col].astype('int64')
-                
-                # Set Date back as index
-                if 'Date' in data.columns:
-                    data = data.set_index('Date')
                 
                 return data
                 
@@ -304,8 +255,8 @@ if ticker:
         if raw_data.empty:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
-            # Clean initial data
-            data = clean_dataframe_for_arrow(raw_data)
+            # Work with a copy
+            data = raw_data.copy()
             
             # Validate essential columns
             essential_columns = ['Close', 'High', 'Low', 'Volume']
@@ -325,9 +276,6 @@ if ticker:
             data["MACD"], data["SIGNAL"] = macd(data)
             data["VolMA"] = data["Volume"].rolling(window=20, min_periods=1).mean().astype('float64')
 
-            # Final cleanup for Arrow compatibility
-            data = clean_dataframe_for_arrow(data)
-            
             # Pris + DeMark
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=data.index, y=data["Close"], name="Close", showlegend=True))
@@ -409,67 +357,36 @@ if ticker:
             with col4:
                 st.metric("MACD", f"{data['MACD'].iloc[-1]:.4f}")
             
-            # Show dataframe with improved error handling
+            # Show dataframe with bulletproof error handling
             if st.checkbox("Vis rådata"):
                 try:
-                    # Create a completely new DataFrame for display
-                    display_data = pd.DataFrame()
+                    # Apply bulletproof cleaning
+                    display_data = bulletproof_arrow_clean(data)
                     
-                    # Copy data column by column with extreme safety
-                    for col in data.columns:
-                        try:
-                            if pd.api.types.is_datetime64_any_dtype(data[col]):
-                                display_data[col] = data[col]
-                            elif pd.api.types.is_numeric_dtype(data[col]):
-                                # Convert to basic numpy types
-                                display_data[col] = pd.to_numeric(data[col], errors='coerce').astype('float64')
-                            else:
-                                display_data[col] = data[col].astype(str)
-                        except:
-                            # Emergency fallback
-                            display_data[col] = data[col].astype(str)
-                    
-                    # Fill any remaining NaN values
-                    display_data = display_data.fillna(0)
-                    
-                    # Show basic info first
+                    # Show DataFrame info
                     st.write(f"**Dataframe info:** {display_data.shape[0]} rader, {display_data.shape[1]} kolonner")
                     
-                    # Debug info about dtypes
-                    st.write("**Column types:**")
-                    for col in display_data.columns:
-                        st.write(f"  - {col}: {display_data[col].dtype}")
+                    # Try to display with st.dataframe first
+                    st.dataframe(display_data, use_container_width=True)
                     
-                    # Try multiple display methods
-                    display_methods = [
-                        ("st.dataframe", lambda: st.dataframe(display_data, use_container_width=True)),
-                        ("st.table (last 20)", lambda: st.table(display_data.tail(20))),
-                        ("st.write", lambda: st.write(display_data))
-                    ]
-                    
-                    for method_name, method_func in display_methods:
-                        try:
-                            st.write(f"**Using {method_name}:**")
-                            method_func()
-                            break  # If successful, stop trying other methods
-                        except Exception as method_error:
-                            st.warning(f"{method_name} failed: {str(method_error)}")
-                            continue
-                    else:
-                        # If all display methods fail, show raw data info
-                        st.error("All display methods failed. Showing data summary:")
-                        st.write(display_data.describe())
-                        
                 except Exception as e:
-                    st.error(f"Kunne ikke vise dataframe: {str(e)}")
-                    st.info("Viser grunnleggende statistikk i stedet:")
-                    st.write(f"**Shape:** {data.shape}")
-                    st.write(f"**Columns:** {list(data.columns)}")
-                    st.write("**Data types:**")
-                    for col, dtype in data.dtypes.items():
-                        st.write(f"  - {col}: {dtype}")
-                    st.write("**Sample data:**")
-                    st.write(data.head())
+                    st.error(f"Dataframe display failed: {str(e)}")
+                    
+                    # Fallback to basic statistics
+                    st.subheader("Grunnleggende statistikk")
+                    try:
+                        # Show numeric columns only
+                        numeric_data = data.select_dtypes(include=[np.number])
+                        st.write("**Numeriske kolonner:**")
+                        st.dataframe(numeric_data.describe())
+                        
+                        st.write("**Siste 10 rader:**")
+                        st.table(numeric_data.tail(10))
+                        
+                    except Exception as fallback_error:
+                        st.error(f"Også fallback feilet: {str(fallback_error)}")
+                        st.write("**Dataframe shape:**", data.shape)
+                        st.write("**Kolonner:**", list(data.columns))
 
     except Exception as e:
         st.error(f"En feil oppstod: {str(e)}")
@@ -481,4 +398,4 @@ if ticker:
             st.write(f"Ticker: {ticker}")
             st.write(f"Period: {period}")
             st.write(f"Error type: {type(e).__name__}")
-            st.write(f"Error message: {str(e)}")
+            st.write(f"Error message: {str(e)

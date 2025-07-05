@@ -37,7 +37,7 @@ def mfi(data, period=14):
         mf = tp * data['Volume']
         pos = mf.where(tp > tp.shift(), 0).rolling(window=period, min_periods=1).sum()
         neg = mf.where(tp < tp.shift(), 0).rolling(window=period, min_periods=1).sum()
-        return 100 - (100 / (1 + pos neg))
+        return 100 - (100 / (1 + pos / neg))
     except Exception as e:
         st.error(f"Error in MFI calculation: {str(e)}")
         return pd.Series(np.nan, index=data.index)

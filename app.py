@@ -4,8 +4,8 @@ import pandas as pd
 import plotly.graph_objs as go
 import numpy as np
 
-# DeMark 9-13
-def demark(close_series):
+# Simple Moving Average
+def calculate_ma(close_series, window=20):
     try:
         if not isinstance(close_series, pd.Series):
             raise ValueError(f"Input must be a pandas Series, got {type(close_series)}")
@@ -14,57 +14,25 @@ def demark(close_series):
         if close_series.isna().all():
             raise ValueError("Close series contains only NaN values")
         
-        st.write(f"DeMark input: type={type(close_series)}, dtype={close_series.dtype}, len={len(close_series)}")
+        st.write(f"MA input: type={type(close_series)}, dtype={close_series.dtype}, len={len(close_series)}")
         
-        # Convert to 1D NumPy array
-        close = np.ravel(close_series.to_numpy())
-        st.write(f"DeMark close array: shape={close.shape}, type={type(close)}")
-        
-        setup = np.zeros(len(close), dtype='int64')
-        countdown = np.zeros(len(close), dtype='int64')
-        c4 = np.roll(close, 4)
-        c2 = np.roll(close, 2)
-        
-        for i in range(4, len(close)):
-            if np.isnan(close[i]) or np.isnan(c4[i]):
-                setup[i] = 0
-            elif close[i] > c4[i]:
-                setup[i] = setup[i-1] + 1 if i > 0 else 1
-            else:
-                setup[i] = 0
-        
-        cd = 0
-        started = False
-        for i in range(2, len(close)):
-            if setup[i] == 9:
-                started = True
-                cd = 0
-            if started:
-                if np.isnan(close[i]) or np.isnan(c2[i]):
-                    cd = 0
-                elif close[i] > c2[i]:
-                    cd += 1
-                countdown[i] = cd
-                if cd == 13:
-                    started = False
-        
+        ma = close_series.rolling(window=window, min_periods=1).mean()
         return pd.DataFrame({
-            'Close': close,
-            'Setup': setup,
-            'Countdown': countdown
+            'Close': close_series,
+            'MA': ma
         }, index=close_series.index)
     except Exception as e:
-        st.error(f"Error in DeMark calculation: {str(e)}")
+        st.error(f"Error in MA calculation: {str(e)}")
         return pd.DataFrame({
-            'Close': np.zeros(len(close_series)),
-            'Setup': np.zeros(len(close_series), dtype='int64'),
-            'Countdown': np.zeros(len(close_series), dtype='int64')
+            'Close': close_series,
+            'MA': np.zeros(len(close_series))
         }, index=close_series.index)
 
 # App UI
-st.title("📈 Teknisk analyse – Oslo Børs (DeMark)")
+st.title("📈 Teknisk analyse – Oslo Børs (Moving Average)")
 ticker = st.text_input("Ticker (f.eks. DNB.OL)", "DNB.OL")
 period = st.selectbox("Periode", ["3mo", "6mo", "1y", "2y"], index=1)
+ma_window = st.slider("MA-vindu (dager)", min_value=5, max_value=50, value=20)
 
 if ticker:
     try:
@@ -86,41 +54,21 @@ if ticker:
         if close_series.empty:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
-            # Calculate DeMark
-            data = demark(close_series)
+            # Calculate Moving Average
+            data = calculate_ma(close_series, window=ma_window)
 
             # Convert to NumPy for plotting, ensure 1D arrays
             dates = np.array(data.index, dtype='datetime64[ms]')
             close = np.ravel(data['Close'].to_numpy())
-            setup = np.ravel(data['Setup'].to_numpy())
-            countdown = np.ravel(data['Countdown'].to_numpy())
-            st.write(f"Plot data: dates shape={dates.shape}, close shape={close.shape}, setup shape={setup.shape}")
+            ma = np.ravel(data['MA'].to_numpy())
+            st.write(f"Plot data: dates shape={dates.shape}, close shape={close.shape}, ma shape={ma.shape}")
 
-            # Plot Close price with DeMark signals
+            # Plot Close price with MA
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=dates, y=close, name="Close", line=dict(color="#1f77b4")))
-            setup_9_mask = setup == 9
-            countdown_13_mask = countdown == 13
-            if np.any(setup_9_mask):
-                fig.add_trace(go.Scatter(
-                    x=dates[setup_9_mask], 
-                    y=close[setup_9_mask], 
-                    text=["9"] * np.sum(setup_9_mask), 
-                    mode="markers+text", 
-                    marker=dict(color="green", size=10),
-                    name="Setup 9"
-                ))
-            if np.any(countdown_13_mask):
-                fig.add_trace(go.Scatter(
-                    x=dates[countdown_13_mask], 
-                    y=close[countdown_13_mask], 
-                    text=["13"] * np.sum(countdown_13_mask), 
-                    mode="markers+text", 
-                    marker=dict(color="red", size=10),
-                    name="Countdown 13"
-                ))
+            fig.add_trace(go.Scatter(x=dates, y=ma, name=f"MA-{ma_window}", line=dict(color="#ff7f0e")))
             fig.update_layout(
-                title=f"{ticker} - Pris og DeMark signaler",
+                title=f"{ticker} - Pris og {ma_window}-dagers Moving Average",
                 xaxis_title="Dato",
                 yaxis_title="Pris",
                 showlegend=True
@@ -128,8 +76,9 @@ if ticker:
             st.plotly_chart(fig, use_container_width=True)
 
             # Summary statistic
-            st.subheader("Siste verdi")
+            st.subheader("Siste verdier")
             st.metric("Pris", f"{close[-1]:.2f}" if not np.isnan(close[-1]) else "N/A")
+            st.metric(f"MA-{ma_window}", f"{ma[-1]:.2f}" if not np.isnan(ma[-1]) else "N/A")
 
     except Exception as e:
         st.error(f"En feil oppstod: {str(e)}")

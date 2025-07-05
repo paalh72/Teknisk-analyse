@@ -1,8 +1,11 @@
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 import plotly.graph_objs as go
 import numpy as np
+from alpha_vantage.timeseries import TimeSeries
+
+# Replace with your Alpha Vantage API key
+ALPHA_VANTAGE_API_KEY = 'YOUR_API_KEY'  # Get a free key at https://www.alphavantage.co
 
 # RSI
 def rsi(data, period=14):
@@ -184,8 +187,14 @@ if ticker:
     try:
         # Cache data fetching
         @st.cache_data
-        def fetch_data(ticker, period, _version=6):
-            return yf.download(ticker, period=period, interval="1d", auto_adjust=False)
+        def fetch_data(ticker, period, _version=7):
+            ts = TimeSeries(key=ALPHA_VANTAGE_API_KEY, output_format='pandas')
+            outputsize = 'compact' if period == '3mo' else 'full'
+            data, meta = ts.get_daily(symbol=ticker, outputsize=outputsize)
+            data = data.rename(columns={'1. open': 'Open', '2. high': 'High', '3. low': 'Low', '4. close': 'Close', '5. volume': 'Volume'})
+            data.index = pd.to_datetime(data.index)
+            data = data.sort_index()  # Ensure chronological order
+            return data
 
         data = fetch_data(ticker, period)
         if data.empty:
@@ -195,17 +204,18 @@ if ticker:
             debug_output = []
             debug_output.append(f"Data columns: {list(data.columns)}")
             debug_output.append(f"Data types:\n{data.dtypes.to_string()}")
-            debug_output.append(f"First few rows:\n{data.head().to_string()}")
+            debug_output.append(f"First few rows:\n{data[['Open', 'High', 'Low', 'Close', 'Volume']].head().to_string()}")
 
             # Validate input data
-            numeric_columns = ['Close', 'High', 'Low', 'Volume']
+            numeric_columns = ['Open', 'High', 'Low', 'Close', 'Volume']
             for col in numeric_columns:
                 data[col] = pd.to_numeric(data[col], errors='coerce')
                 if data[col].isna().all():
-                    raise ValueError(f"Column '{col}' contains only non-numeric or missing values after conversion")
-                non_numeric = data[col][~data[col].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))]
-                if not non_numeric.empty:
-                    debug_output.append(f"Warning: Column {col} contains non-numeric values: {non_numeric.head().to_list()}")
+                    debug_output.append(f"Warning: Column '{col}' contains only non-numeric or missing values")
+                else:
+                    non_numeric = data[col][~data[col].apply(lambda x: isinstance(x, (int, float)) or pd.isna(x))]
+                    if not non_numeric.empty:
+                        debug_output.append(f"Warning: Column {col} contains non-numeric values: {non_numeric.head().to_list()}")
 
             # Calculate technical indicators
             data = demark(data)

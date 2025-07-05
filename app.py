@@ -374,4 +374,3 @@ if ticker:
     except Exception as e:
         st.error(f"En uventet feil oppstod: {str(e)}")
         st.info("Vennligst sjekk at ticker-symbolet er korrekt. Yahoo Finance bruker ofte '.OL' for Oslo Børs, f.eks. 'DNB.OL'.")
-

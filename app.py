@@ -38,10 +38,6 @@ def demark(data):
     if not all(col in data.columns for col in required_columns):
         raise ValueError(f"DataFrame missing required columns: {', '.join(set(required_columns) - set(data.columns))}")
     
-    # Ensure Close is numeric
-    if not pd.api.types.is_numeric_dtype(data['Close']):
-        raise ValueError("Column 'Close' must be numeric")
-    
     # Initialize columns
     data = data.copy()  # Avoid modifying the original DataFrame
     data["C4"] = data["Close"].shift(4)
@@ -104,9 +100,20 @@ if ticker:
         if data.empty:
             st.warning(f"Fant ikke data for ticker: {ticker}")
         else:
+            # Ensure numeric columns
+            numeric_columns = ['Close', 'High', 'Low', 'Volume']
+            for col in numeric_columns:
+                data[col] = pd.to_numeric(data[col], errors='coerce')
+                if data[col].isna().all():
+                    raise ValueError(f"Column '{col}' contains only non-numeric or missing values after conversion")
+            
             # Debug: Inspect data
             # st.write("Data columns:", data.columns)
             # st.write("First few rows:", data.head())
+            
+            # Check if Close is numeric
+            if not pd.api.types.is_numeric_dtype(data['Close']):
+                raise ValueError("Column 'Close' must be numeric after conversion")
             
             # Calculate technical indicators
             data = demark(data)
